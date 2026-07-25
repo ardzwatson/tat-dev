@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (31.3 PRE-Raging Storm)</title>
+  <title>Kapa Sync Video Review (31.4-Raging Storm)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -279,6 +279,88 @@
       color: white;
       border-color: transparent;
     }
+
+    /* Supplementary reference image (Video Library column L) shown below the
+       video player. Hidden entirely (no space reserved) when a clip has no
+       image URL. Capped at a max-height so it can't crowd out the video area
+       on short viewports, while the image itself still follows the
+       requested max-width:100%/height:auto responsive sizing within that. */
+    #refSupplementaryImageContainer {
+      display: none;
+      width: 100%;
+      flex-shrink: 0;
+      max-height: 26vh;
+      margin-top: 8px;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.25);
+    }
+    #refSupplementaryImageContainer.show { display: flex; }
+    #refSupplementaryImage {
+      display: block;
+      max-width: 100%;
+      max-height: 26vh;
+      height: auto;
+      width: auto;
+      cursor: zoom-in;
+      border-radius: 12px;
+    }
+
+    /* Full-screen click-to-expand modal with custom pinch/pan/wheel zoom. */
+    #imageZoomModal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 10000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    #imageZoomModal.show { display: flex; }
+    .zoom-modal-viewport {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      touch-action: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .zoom-modal-viewport img {
+      max-width: 92%;
+      max-height: 88%;
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      will-change: transform;
+      transform-origin: center center;
+      cursor: grab;
+    }
+    .zoom-modal-controls {
+      position: fixed;
+      top: env(safe-area-inset-top, 12px);
+      right: 12px;
+      display: flex;
+      gap: 10px;
+      z-index: 10001;
+    }
+    .zoom-modal-btn {
+      font-family: 'Marcellus', serif;
+      font-size: 12px;
+      font-weight: bold;
+      color: white;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    .zoom-modal-btn:hover { background: rgba(255,255,255,0.22); }
+    .zoom-modal-btn.zoom-modal-close { color: #ff453a; border-color: rgba(255,69,58,0.4); }
 
     .ref-volume-control {
       display: flex;
@@ -773,7 +855,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">31.3 PRE - Raging Storm Build</div>
+      <div class="gate-build-tag">31.4 - Raging Storm Build</div>
     </div>
   </div>
 
@@ -831,6 +913,10 @@
         <div class="zoom-container" id="zoomUi"><input type="range" id="zoomSlider" class="zoom-slider" min="1" max="2" step="0.1" value="1"><label id="zoomLabel">1.0x</label></div>
       </div>
     </div>
+
+    <div id="refSupplementaryImageContainer">
+      <img id="refSupplementaryImage" alt="Reference image" aria-label="Reference image - tap to expand">
+    </div>
     
     <div class="ref-timeline-footer" id="refTimeline">
       <div class="ref-unified-track" id="refUnifiedTrack">
@@ -874,7 +960,18 @@
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">31.3 PRE - Raging Storm</div>
+      <div class="version-tag">31.4/div>
+    </div>
+  </div>
+
+  <!-- FULL-SCREEN IMAGE ZOOM MODAL (reference image click-to-expand) -->
+  <div id="imageZoomModal">
+    <div class="zoom-modal-controls">
+      <button type="button" class="zoom-modal-btn" id="zoomModalResetBtn">Reset Zoom</button>
+      <button type="button" class="zoom-modal-btn zoom-modal-close" id="zoomModalCloseBtn">Close</button>
+    </div>
+    <div class="zoom-modal-viewport" id="zoomModalViewport">
+      <img id="zoomModalImg" alt="Reference image (zoomed)">
     </div>
   </div>
 
@@ -923,6 +1020,13 @@
     const refFullscreenBtn = document.getElementById('refFullscreenBtn');
     const refFsPlayPauseBtn = document.getElementById('refFsPlayPauseBtn');
     const refAudioTrackBar = document.getElementById('refAudioTrackBar');
+    const refSupplementaryImageContainer = document.getElementById('refSupplementaryImageContainer');
+    const refSupplementaryImage = document.getElementById('refSupplementaryImage');
+    const imageZoomModal = document.getElementById('imageZoomModal');
+    const zoomModalViewport = document.getElementById('zoomModalViewport');
+    const zoomModalImg = document.getElementById('zoomModalImg');
+    const zoomModalResetBtn = document.getElementById('zoomModalResetBtn');
+    const zoomModalCloseBtn = document.getElementById('zoomModalCloseBtn');
     const refVolumeBtn = document.getElementById('refVolumeBtn');
     const refVolumeSlider = document.getElementById('refVolumeSlider');
     const gateError = document.getElementById('gateError');
@@ -1538,6 +1642,10 @@
           const tag = (columns[8] || '').trim();
           const icon = (columns[9] || '').trim();
           const iconColor = (columns[10] || '').trim();
+          // Column L: an optional supplementary/reference PNG (e.g. hand
+          // position diagram, lyrics sheet) shown below the video player for
+          // this clip. Blank = no image, container stays hidden.
+          const referenceImage = (columns[11] || '').trim();
 
           clipLibrary[clipId] = {
             name: clipName,
@@ -1548,7 +1656,8 @@
             noWatermark,
             tag,
             icon,
-            iconColor
+            iconColor,
+            referenceImage
           };
         });
         console.info(`Video Library loaded: ${Object.keys(clipLibrary).length} clip(s) - [${Object.keys(clipLibrary).join(', ')}]`);
@@ -1704,6 +1813,144 @@
       highlightActiveAudioTrackButton(index);
     }
 
+    // --- Supplementary reference image (below the video player) ---
+    function applySupplementaryImage(url) {
+      if (url) {
+        refSupplementaryImage.src = url;
+        refSupplementaryImageContainer.classList.add('show');
+      } else {
+        refSupplementaryImage.removeAttribute('src');
+        refSupplementaryImageContainer.classList.remove('show');
+      }
+    }
+
+    // --- Full-screen image zoom modal: custom pinch/pan/wheel zoom ---
+    const ZOOM_MIN_SCALE = 1;
+    const ZOOM_MAX_SCALE = 4;
+    let zoomScale = 1;
+    let zoomTranslateX = 0;
+    let zoomTranslateY = 0;
+    const zoomActivePointers = new Map();
+    let zoomPanStart = null;
+    let zoomLastPinchDistance = null;
+    let zoomLastPinchMidpoint = null;
+
+    function applyZoomTransform() {
+      zoomModalImg.style.transform = `translate(${zoomTranslateX}px, ${zoomTranslateY}px) scale(${zoomScale})`;
+      zoomModalImg.style.cursor = zoomScale > 1 ? 'grab' : 'zoom-in';
+    }
+
+    function resetImageZoom() {
+      zoomScale = 1;
+      zoomTranslateX = 0;
+      zoomTranslateY = 0;
+      applyZoomTransform();
+    }
+
+    function pointerDistance(a, b) {
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    function pointerMidpoint(a, b) {
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+
+    function openImageZoomModal(src) {
+      if (!src) return;
+      zoomModalImg.src = src;
+      resetImageZoom();
+      imageZoomModal.classList.add('show');
+    }
+
+    function closeImageZoomModal() {
+      imageZoomModal.classList.remove('show');
+      zoomActivePointers.clear();
+      zoomPanStart = null;
+      zoomLastPinchDistance = null;
+      zoomLastPinchMidpoint = null;
+      zoomModalImg.removeAttribute('src');
+    }
+
+    refSupplementaryImage.addEventListener('click', () => openImageZoomModal(refSupplementaryImage.src));
+    zoomModalCloseBtn.addEventListener('click', closeImageZoomModal);
+    zoomModalResetBtn.addEventListener('click', resetImageZoom);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && imageZoomModal.classList.contains('show')) closeImageZoomModal();
+    });
+
+    zoomModalViewport.addEventListener('pointerdown', (e) => {
+      zoomModalViewport.setPointerCapture(e.pointerId);
+      zoomActivePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (zoomActivePointers.size === 1) {
+        zoomPanStart = { x: e.clientX, y: e.clientY, translateX: zoomTranslateX, translateY: zoomTranslateY };
+      } else if (zoomActivePointers.size === 2) {
+        const pts = Array.from(zoomActivePointers.values());
+        zoomLastPinchDistance = pointerDistance(pts[0], pts[1]);
+        zoomLastPinchMidpoint = pointerMidpoint(pts[0], pts[1]);
+      }
+    });
+
+    zoomModalViewport.addEventListener('pointermove', (e) => {
+      if (!zoomActivePointers.has(e.pointerId)) return;
+      zoomActivePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (zoomActivePointers.size === 1 && zoomScale > 1 && zoomPanStart) {
+        zoomTranslateX = zoomPanStart.translateX + (e.clientX - zoomPanStart.x);
+        zoomTranslateY = zoomPanStart.translateY + (e.clientY - zoomPanStart.y);
+        applyZoomTransform();
+      } else if (zoomActivePointers.size === 2) {
+        const pts = Array.from(zoomActivePointers.values());
+        const newDistance = pointerDistance(pts[0], pts[1]);
+        const newMidpoint = pointerMidpoint(pts[0], pts[1]);
+
+        if (zoomLastPinchDistance) {
+          const pinchRatio = newDistance / zoomLastPinchDistance;
+          zoomScale = Math.min(ZOOM_MAX_SCALE, Math.max(ZOOM_MIN_SCALE, zoomScale * pinchRatio));
+          zoomTranslateX += newMidpoint.x - zoomLastPinchMidpoint.x;
+          zoomTranslateY += newMidpoint.y - zoomLastPinchMidpoint.y;
+          applyZoomTransform();
+        }
+        zoomLastPinchDistance = newDistance;
+        zoomLastPinchMidpoint = newMidpoint;
+      }
+    });
+
+    function endZoomPointer(e) {
+      zoomActivePointers.delete(e.pointerId);
+
+      if (zoomActivePointers.size < 2) {
+        zoomLastPinchDistance = null;
+        zoomLastPinchMidpoint = null;
+      }
+      if (zoomActivePointers.size === 1) {
+        const remaining = Array.from(zoomActivePointers.values())[0];
+        zoomPanStart = { x: remaining.x, y: remaining.y, translateX: zoomTranslateX, translateY: zoomTranslateY };
+      } else if (zoomActivePointers.size === 0) {
+        zoomPanStart = null;
+        if (zoomScale <= ZOOM_MIN_SCALE) resetImageZoom();
+      }
+    }
+    zoomModalViewport.addEventListener('pointerup', endZoomPointer);
+    zoomModalViewport.addEventListener('pointercancel', endZoomPointer);
+    zoomModalViewport.addEventListener('pointerleave', endZoomPointer);
+
+    zoomModalViewport.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 0.87;
+      zoomScale = Math.min(ZOOM_MAX_SCALE, Math.max(ZOOM_MIN_SCALE, zoomScale * factor));
+      if (zoomScale <= ZOOM_MIN_SCALE) { zoomTranslateX = 0; zoomTranslateY = 0; }
+      applyZoomTransform();
+    }, { passive: false });
+
+    zoomModalViewport.addEventListener('dblclick', () => {
+      if (zoomScale > ZOOM_MIN_SCALE) {
+        resetImageZoom();
+      } else {
+        zoomScale = 2.5;
+        applyZoomTransform();
+      }
+    });
+
     // Builds the list of clips a given user is allowed to pick from - purely
     // whatever the Assigned Clips column grants from the Video Library. If
     // that's empty, the hub is intentionally left blank (see the empty-state
@@ -1737,7 +1984,8 @@
           noWatermark: !!clip.noWatermark,
           tag: clip.tag || '',
           icon: clip.icon || '',
-          iconColor: clip.iconColor || '#ffffff'
+          iconColor: clip.iconColor || '#ffffff',
+          referenceImage: clip.referenceImage || ''
         });
       });
 
@@ -1839,6 +2087,7 @@
       // poster and the translucent camera alignment guide.
       refVideo.setAttribute('poster', activeThumbnailUrl);
       applyOverlayThumbnail();
+      applySupplementaryImage(clip.referenceImage);
       initializeReferenceVideoPlayback();
       startWatermarkEngine();
 
@@ -1872,6 +2121,7 @@
       signOutBtn.style.display = 'block';
 
       refVideo.setAttribute('poster', activeThumbnailUrl);
+      applySupplementaryImage(clip.referenceImage);
       initializeReferenceVideoPlayback();
 
       if (clip.noWatermark) {
@@ -1999,6 +2249,8 @@
       refFsPlayPauseBtn.classList.remove('fade-out');
       refAudioTrackBar.innerHTML = '';
       refAudioTrackBar.classList.remove('show');
+      applySupplementaryImage('');
+      closeImageZoomModal();
     }
 
     function handleSignOut() {
