@@ -914,8 +914,13 @@
       </div>
     </div>
 
+    <!-- Reference image block: deliberately a SIBLING of .container (the video
+         player wrapper) above, not nested inside it or inside #videoBox - kept
+         fully separate from the video player/controls layout. Hidden by
+         default via CSS; JS only adds .show when a clip actually has an
+         image URL (see applySupplementaryImage()). -->
     <div id="refSupplementaryImageContainer">
-      <img id="refSupplementaryImage" alt="Reference image" aria-label="Reference image - tap to expand">
+      <img id="refSupplementaryImage" alt="Reference image" aria-label="Reference image - tap to expand" crossorigin="anonymous" referrerpolicy="no-referrer">
     </div>
     
     <div class="ref-timeline-footer" id="refTimeline">
@@ -960,7 +965,7 @@
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">31.4 - Raging Storm</div>
+      <div class="version-tag">31.4</div>
     </div>
   </div>
 
@@ -971,7 +976,7 @@
       <button type="button" class="zoom-modal-btn zoom-modal-close" id="zoomModalCloseBtn">Close</button>
     </div>
     <div class="zoom-modal-viewport" id="zoomModalViewport">
-      <img id="zoomModalImg" alt="Reference image (zoomed)">
+      <img id="zoomModalImg" alt="Reference image (zoomed)" crossorigin="anonymous" referrerpolicy="no-referrer">
     </div>
   </div>
 
@@ -1814,9 +1819,48 @@
     }
 
     // --- Supplementary reference image (below the video player) ---
+
+    // Converts a Google Drive "view" share link into a direct, hotlinkable
+    // image URL. Handles both the common /file/d/FILE_ID/view form and the
+    // older ?id=FILE_ID share-link form. Anything that isn't a recognizable
+    // Drive link (e.g. a normal direct image URL) is passed through
+    // untouched.
+    function formatGoogleDriveImageUrl(rawUrl) {
+      if (!rawUrl) return '';
+      const trimmed = rawUrl.toString().trim();
+      if (!trimmed) return '';
+
+      const fileIdMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (fileIdMatch && fileIdMatch[1]) {
+        return `https://lh3.googleusercontent.com/d/${fileIdMatch[1]}`;
+      }
+
+      if (trimmed.includes('drive.google.com')) {
+        const idParamMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        if (idParamMatch && idParamMatch[1]) {
+          return `https://lh3.googleusercontent.com/d/${idParamMatch[1]}`;
+        }
+      }
+
+      return trimmed;
+    }
+
+    // Gracefully hides the whole block (rather than leaving a broken-image
+    // icon) if the resolved URL 404s, is unreachable, or otherwise fails to
+    // decode.
+    refSupplementaryImage.addEventListener('error', () => {
+      if (!refSupplementaryImage.getAttribute('src')) return; // error fired from our own removeAttribute clear - ignore
+      console.warn('Reference image failed to load, hiding the block:', refSupplementaryImage.src);
+      refSupplementaryImageContainer.classList.remove('show');
+    });
+
+    // url may legitimately be empty, null, or undefined (no Column L value
+    // for this clip) - in every one of those cases the container stays
+    // fully hidden via CSS (display: none), reserving no space at all.
     function applySupplementaryImage(url) {
-      if (url) {
-        refSupplementaryImage.src = url;
+      const formattedUrl = formatGoogleDriveImageUrl(url);
+      if (formattedUrl) {
+        refSupplementaryImage.src = formattedUrl;
         refSupplementaryImageContainer.classList.add('show');
       } else {
         refSupplementaryImage.removeAttribute('src');
@@ -1873,6 +1917,11 @@
     refSupplementaryImage.addEventListener('click', () => openImageZoomModal(refSupplementaryImage.src));
     zoomModalCloseBtn.addEventListener('click', closeImageZoomModal);
     zoomModalResetBtn.addEventListener('click', resetImageZoom);
+    zoomModalImg.addEventListener('error', () => {
+      if (!zoomModalImg.getAttribute('src')) return; // our own removeAttribute clear on close - ignore
+      console.warn('Zoomed reference image failed to load:', zoomModalImg.src);
+      closeImageZoomModal();
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && imageZoomModal.classList.contains('show')) closeImageZoomModal();
     });
