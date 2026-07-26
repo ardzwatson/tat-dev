@@ -1735,6 +1735,10 @@
           // Column M: checkbox - only render the Chapter Selection UI on the
           // loop practice screen for clips that opt in.
           const showChapters = parseSheetBoolean(columns[12]);
+          // Column N: Google Drive link to a .vtt file containing this
+          // clip's chapter markers. Fetched and parsed directly (rather than
+          // relying on chapters embedded in the HLS stream itself).
+          const chapterVttUrl = (columns[13] || '').trim();
 
           clipLibrary[clipId] = {
             name: clipName,
@@ -1747,7 +1751,8 @@
             icon,
             iconColor,
             referenceImage,
-            showChapters
+            showChapters,
+            chapterVttUrl
           };
         });
         console.info(`Video Library loaded: ${Object.keys(clipLibrary).length} clip(s) - [${Object.keys(clipLibrary).join(', ')}]`);
@@ -1852,10 +1857,10 @@
     // new languages/dubs are added to the library. Keys are matched
     // case-insensitively against both track.lang and track.name.
     const AUDIO_TRACK_LABEL_MAP = {
-      'en': 'Original', 'eng': 'Original', 'english': 'Original',
-      'ja': 'Instrumental', 'jpn': 'Instrumental', 'ja-jp': 'Instrumental', 'japanese': 'Instrumental',
+      'en': 'English', 'eng': 'English', 'english': 'English',
+      'ja': 'Anime', 'jpn': 'Anime', 'ja-jp': 'Anime', 'japanese': 'Anime',
       'fr': 'French', 'fre': 'French', 'fra': 'French', 'french': 'French',
-      'mi': 'Acapella', 'mri': 'Acapella', 'mao': 'Acapella', 'maori': 'Acapella', 'māori': 'Acapella'
+      'mi': 'Te Reo', 'mri': 'Te Reo', 'mao': 'Te Reo', 'maori': 'Te Reo', 'māori': 'Te Reo'
     };
 
     function getAudioTrackLabel(track) {
@@ -2086,43 +2091,103 @@
     });
 
     // --- Chapter selection & multi-chapter range looping (Loop Practice only) ---
+    // Chapters are sourced from a WebVTT file linked in Column N (fetched and
+    // parsed directly), not from anything embedded in the HLS stream itself.
     let detectedChapters = [];
     let selectedChapterIndices = new Set();
-    let chapterDetectionActive = false;
     let chapterShowFlagForClip = false;
-    let chapterLoadedMetadataHandler = null;
-    let chapterAddTrackHandler = null;
-    let chapterCueRetryTimer = null;
-    let chapterCueRetryAttempts = 0;
-    const CHAPTER_CUE_RETRY_INTERVAL_MS = 300;
-    const CHAPTER_CUE_RETRY_MAX_ATTEMPTS = 20; // ~6s of retrying after a candidate track first appears
+    let chapterFetchToken = 0; // invalidates a stale in-flight fetch if the clip changes mid-request
 
-    // Method A candidates: kind "chapters" tracks first (most specific),
-    // then kind "metadata" tracks (Bunny.net/hls.js commonly surface chapter
-    // markers this way), tried in that priority order.
-    function findChapterCandidateTracks() {
-      const tracks = refVideo.textTracks;
-      if (!tracks || tracks.length === 0) return [];
-      const candidates = [];
-      for (let i = 0; i < tracks.length; i++) {
-        if (tracks[i].kind === 'chapters') candidates.push(tracks[i]);
+    // Converts a Google Drive "view" share link into direct download URLs,
+    // returning both candidate forms (drive.google.com/uc?export=download is
+    // tried first, since that's the standard direct-download endpoint for
+    // arbitrary file types; the lh3 CDN form is tried second as a fallback).
+    // Non-Drive URLs are returned as a single candidate, unmodified.
+    function buildChapterVttUrlCandidates(rawUrl) {
+      if (!rawUrl) return [];
+      const trimmed = rawUrl.toString().trim();
+      if (!trimmed) return [];
+
+      const fileIdMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+        (trimmed.includes('drive.google.com') ? trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/) : null);
+
+      if (fileIdMatch && fileIdMatch[1]) {
+        const fileId = fileIdMatch[1];
+        return [
+          `https://drive.google.com/uc?export=download&id=${fileId}`,
+          `https://lh3.googleusercontent.com/d/${fileId}`
+        ];
       }
-      for (let i = 0; i < tracks.length; i++) {
-        if (tracks[i].kind === 'metadata') candidates.push(tracks[i]);
-      }
-      return candidates;
+      return [trimmed];
     }
 
-    function extractChaptersFromTrack(track) {
-      if (!track || !track.cues || track.cues.length === 0) return [];
-      const chapters = [];
-      for (let i = 0; i < track.cues.length; i++) {
-        const cue = track.cues[i];
-        const rawTitle = (cue.text || '').toString().replace(/<[^>]*>/g, '').trim();
-        chapters.push({ title: rawTitle || `Chapter ${i + 1}`, startTime: cue.startTime, endTime: cue.endTime });
+    // Converts a WebVTT timestamp ("HH:MM:SS.mmm" or "MM:SS.mmm") to total
+    // seconds.
+    function parseVttTimestampToSeconds(ts) {
+      const parts = ts.trim().split(':');
+      if (parts.length === 3) {
+        return (parseInt(parts[0], 10) || 0) * 3600 + (parseInt(parts[1], 10) || 0) * 60 + (parseFloat(parts[2]) || 0);
       }
+      if (parts.length === 2) {
+        return (parseInt(parts[0], 10) || 0) * 60 + (parseFloat(parts[1]) || 0);
+      }
+      return parseFloat(parts[0]) || 0;
+    }
+
+    // Hand-rolled WebVTT parser: splits the file into blank-line-separated
+    // cue blocks, locates the "start --> end" timing line within each block
+    // (searched for rather than assumed to be the first line, since a block
+    // may start with an optional cue identifier), and treats every remaining
+    // line in that block as the chapter title/text.
+    function parseVttText(vttText) {
+      const chapters = [];
+      if (!vttText) return chapters;
+
+      const normalized = vttText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const blocks = normalized.split(/\n\s*\n/);
+      const timeLineRegex = /(\d{1,2}:)?\d{2}:\d{2}\.\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}\.\d{3}/;
+
+      blocks.forEach((block) => {
+        const lines = block.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+        if (lines.length === 0) return;
+        if (lines[0].toUpperCase().startsWith('WEBVTT')) return; // header block
+
+        const timeLineIndex = lines.findIndex((l) => timeLineRegex.test(l));
+        if (timeLineIndex === -1) return; // not a cue block (e.g. NOTE/STYLE)
+
+        const match = lines[timeLineIndex].match(/([\d:.]+)\s*-->\s*([\d:.]+)/);
+        if (!match) return;
+
+        const startTime = parseVttTimestampToSeconds(match[1]);
+        const endTime = parseVttTimestampToSeconds(match[2]);
+        const rawTitle = lines.slice(timeLineIndex + 1).join(' ').replace(/<[^>]*>/g, '').trim();
+
+        chapters.push({ title: rawTitle || `Chapter ${chapters.length + 1}`, startTime, endTime });
+      });
+
       chapters.sort((a, b) => a.startTime - b.startTime);
       return chapters;
+    }
+
+    // Tries each candidate URL in turn (direct-download form, then the lh3
+    // CDN form) and returns the parsed chapters from whichever one succeeds
+    // first with a non-empty result. Network errors, non-OK responses, and
+    // VTT files that parse to zero cues are all treated as "try the next
+    // candidate" rather than a hard failure.
+    async function fetchAndParseChapterVtt(rawUrl) {
+      const candidates = buildChapterVttUrlCandidates(rawUrl);
+      for (const url of candidates) {
+        try {
+          const response = await fetch(url, { mode: 'cors' });
+          if (!response.ok) continue;
+          const text = await response.text();
+          const chapters = parseVttText(text);
+          if (chapters.length > 0) return chapters;
+        } catch (e) {
+          console.warn('[Chapters] VTT fetch failed for', url, e);
+        }
+      }
+      return [];
     }
 
     function formatChapterTimestamp(seconds) {
@@ -2134,12 +2199,22 @@
 
     function showChapterLoadingState(isLoading) {
       if (isLoading) {
+        refChapterLoading.textContent = 'Loading chapters...';
         refChapterSection.classList.add('show');
         refChapterLoading.style.display = 'block';
         refChapterBar.classList.remove('show');
       } else {
         refChapterLoading.style.display = 'none';
       }
+    }
+
+    // Shown when Column M is TRUE but Column N is empty, or the fetch/parse
+    // of Column N's VTT file didn't yield any usable chapters.
+    function showChapterNoFileMessage() {
+      refChapterLoading.textContent = 'No chapter file available.';
+      refChapterLoading.style.display = 'block';
+      refChapterBar.classList.remove('show');
+      refChapterSection.classList.add('show');
     }
 
     function renderChapterButtonStates() {
@@ -2212,26 +2287,8 @@
       renderChapterButtonStates();
     }
 
-    function detachChapterDetectionListeners() {
-      if (chapterLoadedMetadataHandler) {
-        refVideo.removeEventListener('loadedmetadata', chapterLoadedMetadataHandler);
-        chapterLoadedMetadataHandler = null;
-      }
-      if (chapterAddTrackHandler && refVideo.textTracks) {
-        refVideo.textTracks.removeEventListener('addtrack', chapterAddTrackHandler);
-        chapterAddTrackHandler = null;
-      }
-    }
-
-    function stopChapterCueRetry() {
-      if (chapterCueRetryTimer) { clearTimeout(chapterCueRetryTimer); chapterCueRetryTimer = null; }
-      chapterCueRetryAttempts = 0;
-    }
-
     function resetChapterState() {
-      stopChapterCueRetry();
-      detachChapterDetectionListeners();
-      chapterDetectionActive = false;
+      chapterFetchToken++; // invalidate any in-flight fetch belonging to the previous clip
       detectedChapters = [];
       selectedChapterIndices.clear();
       refChapterBar.innerHTML = '';
@@ -2240,93 +2297,37 @@
       showChapterLoadingState(false);
     }
 
-    // Forces every candidate track into "hidden" mode (required for the
-    // browser to actually populate .cues) and returns true the moment any
-    // candidate yields at least one usable cue.
-    function scanChapterCandidatesForCues() {
-      const candidates = findChapterCandidateTracks();
-      candidates.forEach((track) => {
-        if (track.mode === 'disabled') track.mode = 'hidden';
-      });
-      for (const track of candidates) {
-        const chapters = extractChaptersFromTrack(track);
-        if (chapters.length > 0) {
-          detectedChapters = chapters;
-          renderChapterButtons();
-          showChapterLoadingState(false);
-          stopChapterCueRetry();
-          console.log(`[Chapters] Column M enabled: true - detected ${chapters.length} chapter cue(s) from a track (kind="${track.kind}", label="${track.label || '(none)'}").`);
-          return true;
-        }
-      }
-      return { found: false, candidateCount: candidates.length };
-    }
-
-    // Cues on a freshly-appeared text track can populate asynchronously, so
-    // once at least one candidate track exists, poll briefly for its cues to
-    // fill in rather than giving up after a single check.
-    function scheduleChapterCueRetry() {
-      if (chapterCueRetryTimer || !chapterDetectionActive) return;
-      chapterCueRetryTimer = setTimeout(chapterCueRetryTick, CHAPTER_CUE_RETRY_INTERVAL_MS);
-    }
-
-    function chapterCueRetryTick() {
-      chapterCueRetryTimer = null;
-      if (!chapterDetectionActive) return;
-      chapterCueRetryAttempts++;
-      const result = scanChapterCandidatesForCues();
-      if (result === true) return;
-
-      if (chapterCueRetryAttempts < CHAPTER_CUE_RETRY_MAX_ATTEMPTS) {
-        chapterCueRetryTimer = setTimeout(chapterCueRetryTick, CHAPTER_CUE_RETRY_INTERVAL_MS);
-      } else {
-        // Method B: diagnostic fallback - Column M was enabled but nothing
-        // was ever found, so log exactly what was (and wasn't) seen to make
-        // debugging a real Bunny.net stream straightforward.
-        console.log(
-          `[Chapters] Column M enabled: ${chapterShowFlagForClip} - no chapter cues detected after ${chapterCueRetryAttempts} attempts. ` +
-          `Candidate text tracks found: ${result.candidateCount}. Total video.textTracks: ${refVideo.textTracks ? refVideo.textTracks.length : 0}.`
-        );
-        showChapterLoadingState(false);
-        refChapterSection.classList.remove('show');
-      }
-    }
-
-    // Method A: primary detection path, triggered by the video's own
-    // loadedmetadata event and by the textTracks list's addtrack event (a
-    // chapter track can appear at either point depending on how/when hls.js
-    // parses it out of the manifest).
-    function onChapterLoadedMetadata() {
-      if (!chapterDetectionActive) return;
-      const result = scanChapterCandidatesForCues();
-      if (result !== true) scheduleChapterCueRetry();
-    }
-    function onChapterAddTrack() {
-      if (!chapterDetectionActive) return;
-      const result = scanChapterCandidatesForCues();
-      if (result !== true) scheduleChapterCueRetry();
-    }
-
-    function startChapterDetection(shouldShow) {
+    // vttUrl is Column N (chapterVttUrl). shouldShow is Column M (showChapters).
+    async function startChapterDetection(shouldShow, vttUrl) {
       resetChapterState();
       chapterShowFlagForClip = shouldShow;
       if (!shouldShow) return;
 
-      chapterDetectionActive = true;
-      showChapterLoadingState(true);
-
-      chapterLoadedMetadataHandler = onChapterLoadedMetadata;
-      chapterAddTrackHandler = onChapterAddTrack;
-      refVideo.addEventListener('loadedmetadata', chapterLoadedMetadataHandler);
-      if (refVideo.textTracks) {
-        refVideo.textTracks.addEventListener('addtrack', chapterAddTrackHandler);
+      if (!vttUrl) {
+        console.log('[Chapters] Column M enabled: true - Column N is empty, no VTT file to fetch.');
+        showChapterNoFileMessage();
+        return;
       }
 
-      // Metadata/tracks may already exist by the time we attach (e.g. the
-      // clip was already loaded once this session) - scan immediately too,
-      // rather than only reacting to a future event that may never fire again.
-      const result = scanChapterCandidatesForCues();
-      if (result !== true) scheduleChapterCueRetry();
+      showChapterLoadingState(true);
+      const requestToken = chapterFetchToken;
+
+      const chapters = await fetchAndParseChapterVtt(vttUrl);
+
+      // The clip may have changed (or the screen may have been left) while
+      // this fetch was in flight - a stale result must never overwrite
+      // whatever the user is looking at now.
+      if (requestToken !== chapterFetchToken) return;
+
+      if (chapters.length > 0) {
+        detectedChapters = chapters;
+        renderChapterButtons();
+        showChapterLoadingState(false);
+        console.log(`[Chapters] Column M enabled: true - fetched and parsed ${chapters.length} chapter(s) from Column N's VTT file.`);
+      } else {
+        console.log('[Chapters] Column M enabled: true - Column N VTT fetch/parse yielded no chapters.');
+        showChapterNoFileMessage();
+      }
     }
 
     // Builds the list of clips a given user is allowed to pick from - purely
@@ -2364,7 +2365,8 @@
           icon: clip.icon || '',
           iconColor: clip.iconColor || '#ffffff',
           referenceImage: clip.referenceImage || '',
-          showChapters: !!clip.showChapters
+          showChapters: !!clip.showChapters,
+          chapterVttUrl: clip.chapterVttUrl || ''
         });
       });
 
@@ -2502,7 +2504,7 @@
       refVideo.setAttribute('poster', activeThumbnailUrl);
       applySupplementaryImage(clip.referenceImage);
       initializeReferenceVideoPlayback();
-      startChapterDetection(!!clip.showChapters);
+      startChapterDetection(!!clip.showChapters, clip.chapterVttUrl);
 
       if (clip.noWatermark) {
         if (watermarkTimer) clearInterval(watermarkTimer);
