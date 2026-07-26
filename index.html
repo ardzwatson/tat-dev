@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (31.5-Raging Storm)</title>
+  <title>Kapa Sync Video Review (31.5)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -366,6 +366,21 @@
        Show Chapters (Column M) checked AND at least one chapter actually
        detected in the stream. Sits above the loop range track since chapter
        taps directly drive that track's start/end. */
+    .ref-chapter-section {
+      display: none;
+      width: 100%;
+      flex-shrink: 0;
+      margin-bottom: 8px;
+    }
+    #appContent.loop-only-mode .ref-chapter-section.show { display: block; }
+    .ref-chapter-loading {
+      display: none;
+      font-family: 'Marcellus', serif;
+      font-size: 11px;
+      color: #8e8e93;
+      text-align: center;
+      padding: 6px 2px;
+    }
     .ref-chapter-bar {
       display: none;
       width: 100%;
@@ -374,11 +389,10 @@
       overflow-x: auto;
       scrollbar-width: none;
       padding: 0 2px;
-      margin-bottom: 8px;
       flex-shrink: 0;
     }
     .ref-chapter-bar::-webkit-scrollbar { display: none; }
-    #appContent.loop-only-mode .ref-chapter-bar.show { display: flex; }
+    .ref-chapter-bar.show { display: flex; }
     .ref-chapter-btn {
       font-family: 'Marcellus', serif;
       font-size: 10px;
@@ -893,7 +907,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">31.5 - Raging Storm Build</div>
+      <div class="gate-build-tag">31.5 Build</div>
     </div>
   </div>
 
@@ -960,8 +974,6 @@
     <div id="refSupplementaryImageContainer">
       <img id="refSupplementaryImage" alt="Reference image" aria-label="Reference image - tap to expand" crossorigin="anonymous" referrerpolicy="no-referrer">
     </div>
-
-    <div class="ref-chapter-bar" id="refChapterBar"></div>
     
     <div class="ref-timeline-footer" id="refTimeline">
       <div class="ref-unified-track" id="refUnifiedTrack">
@@ -972,6 +984,15 @@
       </div>
       <div class="ref-time-display" id="refTimeLabel">0:00</div>
       <button type="button" class="ref-loop-reset-btn" id="refLoopResetBtn">Reset Loop</button>
+    </div>
+
+    <!-- Chapter Selection UI - directly below the loop control sliders above.
+         Hidden entirely until a clip has Show Chapters (Column M) enabled;
+         shows a loading state while cues are still being detected, then
+         swaps to the pill buttons once chapters are found. -->
+    <div class="ref-chapter-section" id="refChapterSection">
+      <div class="ref-chapter-loading" id="refChapterLoading">Loading chapters...</div>
+      <div class="ref-chapter-bar" id="refChapterBar"></div>
     </div>
     
     <div class="timeline-footer" id="masterTimeline">
@@ -1073,6 +1094,8 @@
     const zoomModalResetBtn = document.getElementById('zoomModalResetBtn');
     const zoomModalCloseBtn = document.getElementById('zoomModalCloseBtn');
     const refChapterBar = document.getElementById('refChapterBar');
+    const refChapterSection = document.getElementById('refChapterSection');
+    const refChapterLoading = document.getElementById('refChapterLoading');
     const refVolumeBtn = document.getElementById('refVolumeBtn');
     const refVolumeSlider = document.getElementById('refVolumeSlider');
     const gateError = document.getElementById('gateError');
@@ -1545,6 +1568,19 @@
       }
     });
 
+    // Robustly interprets a Google Sheets checkbox/boolean cell. Sheets
+    // exports checkboxes as the literal text TRUE/FALSE, but a cell can also
+    // legitimately arrive as a real boolean (if this were ever fed non-CSV
+    // data), or as "1"/"true" typed manually - all are treated as truthy so
+    // the Column M check can't silently miss a valid-but-differently-cased
+    // or differently-typed value.
+    function parseSheetBoolean(val) {
+      if (val === true) return true;
+      if (val === false || val === null || val === undefined) return false;
+      const normalized = val.toString().trim().toLowerCase();
+      return normalized === 'true' || normalized === '1';
+    }
+
     // Parses an entire CSV payload at once, rather than splitting into lines
     // first. This matters because a cell containing a line break (someone hit
     // Enter while typing a name, for example) gets wrapped in quotes by Google
@@ -1698,7 +1734,7 @@
           const referenceImage = (columns[11] || '').trim();
           // Column M: checkbox - only render the Chapter Selection UI on the
           // loop practice screen for clips that opt in.
-          const showChapters = (columns[12] || '').trim().toUpperCase() === 'TRUE';
+          const showChapters = parseSheetBoolean(columns[12]);
 
           clipLibrary[clipId] = {
             name: clipName,
@@ -2052,22 +2088,29 @@
     // --- Chapter selection & multi-chapter range looping (Loop Practice only) ---
     let detectedChapters = [];
     let selectedChapterIndices = new Set();
-    let chapterDetectionTimer = null;
-    let chapterDetectionAttempts = 0;
-    const CHAPTER_DETECTION_INTERVAL_MS = 300;
-    const CHAPTER_DETECTION_MAX_ATTEMPTS = 25;
+    let chapterDetectionActive = false;
+    let chapterShowFlagForClip = false;
+    let chapterLoadedMetadataHandler = null;
+    let chapterAddTrackHandler = null;
+    let chapterCueRetryTimer = null;
+    let chapterCueRetryAttempts = 0;
+    const CHAPTER_CUE_RETRY_INTERVAL_MS = 300;
+    const CHAPTER_CUE_RETRY_MAX_ATTEMPTS = 20; // ~6s of retrying after a candidate track first appears
 
-    function findChaptersTextTrack() {
+    // Method A candidates: kind "chapters" tracks first (most specific),
+    // then kind "metadata" tracks (Bunny.net/hls.js commonly surface chapter
+    // markers this way), tried in that priority order.
+    function findChapterCandidateTracks() {
       const tracks = refVideo.textTracks;
-      if (!tracks || tracks.length === 0) return null;
+      if (!tracks || tracks.length === 0) return [];
+      const candidates = [];
       for (let i = 0; i < tracks.length; i++) {
-        if (tracks[i].kind === 'chapters') return tracks[i];
+        if (tracks[i].kind === 'chapters') candidates.push(tracks[i]);
       }
       for (let i = 0; i < tracks.length; i++) {
-        const label = (tracks[i].label || '').toLowerCase();
-        if (label.includes('chapter')) return tracks[i];
+        if (tracks[i].kind === 'metadata') candidates.push(tracks[i]);
       }
-      return null;
+      return candidates;
     }
 
     function extractChaptersFromTrack(track) {
@@ -2089,6 +2132,16 @@
       return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
     }
 
+    function showChapterLoadingState(isLoading) {
+      if (isLoading) {
+        refChapterSection.classList.add('show');
+        refChapterLoading.style.display = 'block';
+        refChapterBar.classList.remove('show');
+      } else {
+        refChapterLoading.style.display = 'none';
+      }
+    }
+
     function renderChapterButtonStates() {
       Array.from(refChapterBar.children).forEach((btn) => {
         const idx = parseInt(btn.dataset.chapterIndex, 10);
@@ -2100,6 +2153,7 @@
       refChapterBar.innerHTML = '';
       if (detectedChapters.length === 0) {
         refChapterBar.classList.remove('show');
+        refChapterSection.classList.remove('show');
         return;
       }
       detectedChapters.forEach((chapter, index) => {
@@ -2111,6 +2165,7 @@
         btn.addEventListener('click', () => onChapterButtonClick(index));
         refChapterBar.appendChild(btn);
       });
+      refChapterSection.classList.add('show');
       refChapterBar.classList.add('show');
       renderChapterButtonStates();
     }
@@ -2157,43 +2212,121 @@
       renderChapterButtonStates();
     }
 
-    function stopChapterDetection() {
-      if (chapterDetectionTimer) { clearTimeout(chapterDetectionTimer); chapterDetectionTimer = null; }
-      chapterDetectionAttempts = 0;
+    function detachChapterDetectionListeners() {
+      if (chapterLoadedMetadataHandler) {
+        refVideo.removeEventListener('loadedmetadata', chapterLoadedMetadataHandler);
+        chapterLoadedMetadataHandler = null;
+      }
+      if (chapterAddTrackHandler && refVideo.textTracks) {
+        refVideo.textTracks.removeEventListener('addtrack', chapterAddTrackHandler);
+        chapterAddTrackHandler = null;
+      }
+    }
+
+    function stopChapterCueRetry() {
+      if (chapterCueRetryTimer) { clearTimeout(chapterCueRetryTimer); chapterCueRetryTimer = null; }
+      chapterCueRetryAttempts = 0;
     }
 
     function resetChapterState() {
-      stopChapterDetection();
+      stopChapterCueRetry();
+      detachChapterDetectionListeners();
+      chapterDetectionActive = false;
       detectedChapters = [];
       selectedChapterIndices.clear();
       refChapterBar.innerHTML = '';
       refChapterBar.classList.remove('show');
+      refChapterSection.classList.remove('show');
+      showChapterLoadingState(false);
     }
 
-    function tryDetectChapters() {
-      chapterDetectionAttempts++;
-      const track = findChaptersTextTrack();
-      if (track) {
+    // Forces every candidate track into "hidden" mode (required for the
+    // browser to actually populate .cues) and returns true the moment any
+    // candidate yields at least one usable cue.
+    function scanChapterCandidatesForCues() {
+      const candidates = findChapterCandidateTracks();
+      candidates.forEach((track) => {
         if (track.mode === 'disabled') track.mode = 'hidden';
+      });
+      for (const track of candidates) {
         const chapters = extractChaptersFromTrack(track);
         if (chapters.length > 0) {
           detectedChapters = chapters;
           renderChapterButtons();
-          stopChapterDetection();
-          return;
+          showChapterLoadingState(false);
+          stopChapterCueRetry();
+          console.log(`[Chapters] Column M enabled: true - detected ${chapters.length} chapter cue(s) from a track (kind="${track.kind}", label="${track.label || '(none)'}").`);
+          return true;
         }
       }
-      if (chapterDetectionAttempts >= CHAPTER_DETECTION_MAX_ATTEMPTS) {
-        stopChapterDetection();
-        return;
+      return { found: false, candidateCount: candidates.length };
+    }
+
+    // Cues on a freshly-appeared text track can populate asynchronously, so
+    // once at least one candidate track exists, poll briefly for its cues to
+    // fill in rather than giving up after a single check.
+    function scheduleChapterCueRetry() {
+      if (chapterCueRetryTimer || !chapterDetectionActive) return;
+      chapterCueRetryTimer = setTimeout(chapterCueRetryTick, CHAPTER_CUE_RETRY_INTERVAL_MS);
+    }
+
+    function chapterCueRetryTick() {
+      chapterCueRetryTimer = null;
+      if (!chapterDetectionActive) return;
+      chapterCueRetryAttempts++;
+      const result = scanChapterCandidatesForCues();
+      if (result === true) return;
+
+      if (chapterCueRetryAttempts < CHAPTER_CUE_RETRY_MAX_ATTEMPTS) {
+        chapterCueRetryTimer = setTimeout(chapterCueRetryTick, CHAPTER_CUE_RETRY_INTERVAL_MS);
+      } else {
+        // Method B: diagnostic fallback - Column M was enabled but nothing
+        // was ever found, so log exactly what was (and wasn't) seen to make
+        // debugging a real Bunny.net stream straightforward.
+        console.log(
+          `[Chapters] Column M enabled: ${chapterShowFlagForClip} - no chapter cues detected after ${chapterCueRetryAttempts} attempts. ` +
+          `Candidate text tracks found: ${result.candidateCount}. Total video.textTracks: ${refVideo.textTracks ? refVideo.textTracks.length : 0}.`
+        );
+        showChapterLoadingState(false);
+        refChapterSection.classList.remove('show');
       }
-      chapterDetectionTimer = setTimeout(tryDetectChapters, CHAPTER_DETECTION_INTERVAL_MS);
+    }
+
+    // Method A: primary detection path, triggered by the video's own
+    // loadedmetadata event and by the textTracks list's addtrack event (a
+    // chapter track can appear at either point depending on how/when hls.js
+    // parses it out of the manifest).
+    function onChapterLoadedMetadata() {
+      if (!chapterDetectionActive) return;
+      const result = scanChapterCandidatesForCues();
+      if (result !== true) scheduleChapterCueRetry();
+    }
+    function onChapterAddTrack() {
+      if (!chapterDetectionActive) return;
+      const result = scanChapterCandidatesForCues();
+      if (result !== true) scheduleChapterCueRetry();
     }
 
     function startChapterDetection(shouldShow) {
       resetChapterState();
+      chapterShowFlagForClip = shouldShow;
       if (!shouldShow) return;
-      tryDetectChapters();
+
+      chapterDetectionActive = true;
+      showChapterLoadingState(true);
+
+      chapterLoadedMetadataHandler = onChapterLoadedMetadata;
+      chapterAddTrackHandler = onChapterAddTrack;
+      refVideo.addEventListener('loadedmetadata', chapterLoadedMetadataHandler);
+      if (refVideo.textTracks) {
+        refVideo.textTracks.addEventListener('addtrack', chapterAddTrackHandler);
+      }
+
+      // Metadata/tracks may already exist by the time we attach (e.g. the
+      // clip was already loaded once this session) - scan immediately too,
+      // rather than only reacting to a future event that may never fire again.
+      const result = scanChapterCandidatesForCues();
+      if (result !== true) scheduleChapterCueRetry();
     }
 
     // Builds the list of clips a given user is allowed to pick from - purely
