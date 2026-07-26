@@ -2102,7 +2102,11 @@
     // returning both candidate forms (drive.google.com/uc?export=download is
     // tried first, since that's the standard direct-download endpoint for
     // arbitrary file types; the lh3 CDN form is tried second as a fallback).
-    // Non-Drive URLs are returned as a single candidate, unmodified.
+    // Non-Drive URLs are returned as a single candidate, unmodified. Every
+    // base candidate also gets a CORS-proxy-wrapped fallback appended right
+    // after it, since a direct browser fetch() to Drive (and many other
+    // third-party hosts) is commonly blocked by CORS even when the URL
+    // itself is publicly reachable.
     function buildChapterVttUrlCandidates(rawUrl) {
       if (!rawUrl) return [];
       const trimmed = rawUrl.toString().trim();
@@ -2111,18 +2115,33 @@
       const fileIdMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
         (trimmed.includes('drive.google.com') ? trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/) : null);
 
+      let baseCandidates;
       if (fileIdMatch && fileIdMatch[1]) {
         const fileId = fileIdMatch[1];
-        return [
+        baseCandidates = [
           `https://drive.google.com/uc?export=download&id=${fileId}`,
           `https://lh3.googleusercontent.com/d/${fileId}`
         ];
+      } else {
+        baseCandidates = [trimmed];
       }
-      return [trimmed];
+
+      const withProxies = [];
+      baseCandidates.forEach((url) => {
+        withProxies.push(url);
+        withProxies.push(`https://corsproxy.io/?${encodeURIComponent(url)}`);
+        withProxies.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+      });
+      return withProxies;
     }
 
     // Converts a WebVTT timestamp ("HH:MM:SS.mmm" or "MM:SS.mmm") to total
-    // seconds.
+    // seconds. Per the WebVTT spec, the presence of an hours component is
+    // determined purely by how many colon-separated parts the timestamp has
+    // (3 parts = HH:MM:SS, 2 parts = MM:SS) - this is evaluated independently
+    // for every single timestamp, so a file can freely mix both formats
+    // (e.g. early short chapters as MM:SS.mmm, later ones past the one-hour
+    // mark as HH:MM:SS.mmm) without any chapter being misparsed.
     function parseVttTimestampToSeconds(ts) {
       const parts = ts.trim().split(':');
       if (parts.length === 3) {
@@ -2145,7 +2164,11 @@
 
       const normalized = vttText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       const blocks = normalized.split(/\n\s*\n/);
-      const timeLineRegex = /(\d{1,2}:)?\d{2}:\d{2}\.\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}\.\d{3}/;
+      // Fractional seconds are matched as 1-3 digits (and optional entirely)
+      // rather than requiring exactly 3 - some export tools write 2-digit
+      // centisecond precision (e.g. "01:23.44") instead of milliseconds, and
+      // a stricter match would silently skip the whole cue block.
+      const timeLineRegex = /(\d{1,2}:)?\d{2}:\d{2}(\.\d{1,3})?\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}(\.\d{1,3})?/;
 
       blocks.forEach((block) => {
         const lines = block.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
@@ -2169,22 +2192,42 @@
       return chapters;
     }
 
-    // Tries each candidate URL in turn (direct-download form, then the lh3
-    // CDN form) and returns the parsed chapters from whichever one succeeds
-    // first with a non-empty result. Network errors, non-OK responses, and
-    // VTT files that parse to zero cues are all treated as "try the next
-    // candidate" rather than a hard failure.
+    // Tries each candidate URL in turn (direct-download form, lh3 CDN form,
+    // and CORS-proxy-wrapped variants of both) and returns the parsed
+    // chapters from whichever one succeeds first with a non-empty result.
+    // Non-OK responses, HTML pages served in place of the raw file (Google's
+    // "can't scan this file for viruses" confirmation page, most commonly),
+    // network errors, and VTT files that parse to zero cues are all treated
+    // as "try the next candidate" rather than a hard failure.
     async function fetchAndParseChapterVtt(rawUrl) {
       const candidates = buildChapterVttUrlCandidates(rawUrl);
       for (const url of candidates) {
         try {
           const response = await fetch(url, { mode: 'cors' });
-          if (!response.ok) continue;
+          if (!response.ok) {
+            console.warn('[Chapters] VTT candidate returned non-OK status:', response.status, url);
+            continue;
+          }
+
+          const contentType = (response.headers.get('content-type') || '').toLowerCase();
           const text = await response.text();
+
+          // Google (and some proxies) can serve an HTML confirmation/warning
+          // page with a 200 status instead of the actual file contents -
+          // detect that by content-type first, and fall back to sniffing the
+          // body itself in case the header was missing/generic.
+          const looksLikeHtml = contentType.includes('text/html') ||
+            /^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text);
+          if (looksLikeHtml) {
+            console.warn('[Chapters] VTT candidate returned an HTML page instead of VTT content (likely a Drive confirmation page):', url);
+            continue;
+          }
+
           const chapters = parseVttText(text);
           if (chapters.length > 0) return chapters;
-        } catch (e) {
-          console.warn('[Chapters] VTT fetch failed for', url, e);
+          console.warn('[Chapters] VTT candidate fetched successfully but contained no parseable cues:', url);
+        } catch (err) {
+          console.error('VTT Fetch/Parse Error:', err, '- URL:', url);
         }
       }
       return [];
@@ -2298,13 +2341,14 @@
     }
 
     // vttUrl is Column N (chapterVttUrl). shouldShow is Column M (showChapters).
-    async function startChapterDetection(shouldShow, vttUrl) {
+    async function startChapterDetection(shouldShow, vttSource) {
       resetChapterState();
       chapterShowFlagForClip = shouldShow;
       if (!shouldShow) return;
 
-      if (!vttUrl) {
-        console.log('[Chapters] Column M enabled: true - Column N is empty, no VTT file to fetch.');
+      const trimmedSource = (vttSource || '').toString().trim();
+      if (!trimmedSource) {
+        console.log('[Chapters] Column M enabled: true - Column N is empty, no VTT source to use.');
         showChapterNoFileMessage();
         return;
       }
@@ -2312,20 +2356,28 @@
       showChapterLoadingState(true);
       const requestToken = chapterFetchToken;
 
-      const chapters = await fetchAndParseChapterVtt(vttUrl);
+      let chapters;
+      if (/^webvtt/i.test(trimmedSource)) {
+        // Column N contains literal WebVTT text (starts with "WEBVTT")
+        // rather than a URL - parse it directly, no network fetch needed.
+        console.log('[Chapters] Column N contains inline WebVTT text - parsing directly (no fetch).');
+        chapters = parseVttText(trimmedSource);
+      } else {
+        chapters = await fetchAndParseChapterVtt(trimmedSource);
+      }
 
       // The clip may have changed (or the screen may have been left) while
-      // this fetch was in flight - a stale result must never overwrite
-      // whatever the user is looking at now.
+      // this was in flight - a stale result must never overwrite whatever
+      // the user is looking at now.
       if (requestToken !== chapterFetchToken) return;
 
       if (chapters.length > 0) {
         detectedChapters = chapters;
         renderChapterButtons();
         showChapterLoadingState(false);
-        console.log(`[Chapters] Column M enabled: true - fetched and parsed ${chapters.length} chapter(s) from Column N's VTT file.`);
+        console.log(`[Chapters] Column M enabled: true - parsed ${chapters.length} chapter(s) from Column N.`);
       } else {
-        console.log('[Chapters] Column M enabled: true - Column N VTT fetch/parse yielded no chapters.');
+        console.log('[Chapters] Column M enabled: true - Column N VTT source yielded no chapters.');
         showChapterNoFileMessage();
       }
     }
