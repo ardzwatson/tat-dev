@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (31.4-Raging Storm)</title>
+  <title>Kapa Sync Video Review (31.5-Raging Storm)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -361,6 +361,44 @@
     }
     .zoom-modal-btn:hover { background: rgba(255,255,255,0.22); }
     .zoom-modal-btn.zoom-modal-close { color: #ff453a; border-color: rgba(255,69,58,0.4); }
+
+    /* Chapter selection pills - Loop Practice only, and only for clips with
+       Show Chapters (Column M) checked AND at least one chapter actually
+       detected in the stream. Sits above the loop range track since chapter
+       taps directly drive that track's start/end. */
+    .ref-chapter-bar {
+      display: none;
+      width: 100%;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding: 0 2px;
+      margin-bottom: 8px;
+      flex-shrink: 0;
+    }
+    .ref-chapter-bar::-webkit-scrollbar { display: none; }
+    #appContent.loop-only-mode .ref-chapter-bar.show { display: flex; }
+    .ref-chapter-btn {
+      font-family: 'Marcellus', serif;
+      font-size: 10px;
+      font-weight: bold;
+      color: #ccc;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid #48484a;
+      border-radius: 14px;
+      padding: 6px 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+    .ref-chapter-btn:hover { border-color: #777; color: white; }
+    .ref-chapter-btn.active {
+      background: linear-gradient(135deg, #ff9500, #cc7700);
+      color: white;
+      border-color: transparent;
+    }
 
     .ref-volume-control {
       display: flex;
@@ -855,7 +893,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">31.4 - Raging Storm Build</div>
+      <div class="gate-build-tag">31.5 - Raging Storm Build</div>
     </div>
   </div>
 
@@ -922,6 +960,8 @@
     <div id="refSupplementaryImageContainer">
       <img id="refSupplementaryImage" alt="Reference image" aria-label="Reference image - tap to expand" crossorigin="anonymous" referrerpolicy="no-referrer">
     </div>
+
+    <div class="ref-chapter-bar" id="refChapterBar"></div>
     
     <div class="ref-timeline-footer" id="refTimeline">
       <div class="ref-unified-track" id="refUnifiedTrack">
@@ -965,7 +1005,7 @@
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">31.4</div>
+      <div class="version-tag">31.5</div>
     </div>
   </div>
 
@@ -1032,6 +1072,7 @@
     const zoomModalImg = document.getElementById('zoomModalImg');
     const zoomModalResetBtn = document.getElementById('zoomModalResetBtn');
     const zoomModalCloseBtn = document.getElementById('zoomModalCloseBtn');
+    const refChapterBar = document.getElementById('refChapterBar');
     const refVolumeBtn = document.getElementById('refVolumeBtn');
     const refVolumeSlider = document.getElementById('refVolumeSlider');
     const gateError = document.getElementById('gateError');
@@ -1238,6 +1279,9 @@
           // Pause while dragging a loop marker so natural playback advancement
           // doesn't fight with the live-seek-to-follow-the-marker below.
           refVideo.pause();
+          // Manually adjusting the range no longer necessarily matches any
+          // chapter's boundaries, so drop the (now stale) chapter highlight.
+          clearChapterSelectionHighlight();
         }
 
         const onMove = (moveEvent) => {
@@ -1286,6 +1330,7 @@
     setupRefTrackDrag(refPlayheadHandle, 'playhead');
 
     refLoopResetBtn.addEventListener('click', () => {
+      clearChapterSelectionHighlight();
       resetLoopRange();
       if (isPreviewingRef && (refVideo.currentTime < loopStartTime || refVideo.currentTime > loopEndTime)) {
         refVideo.currentTime = loopStartTime;
@@ -1651,6 +1696,9 @@
           // position diagram, lyrics sheet) shown below the video player for
           // this clip. Blank = no image, container stays hidden.
           const referenceImage = (columns[11] || '').trim();
+          // Column M: checkbox - only render the Chapter Selection UI on the
+          // loop practice screen for clips that opt in.
+          const showChapters = (columns[12] || '').trim().toUpperCase() === 'TRUE';
 
           clipLibrary[clipId] = {
             name: clipName,
@@ -1662,7 +1710,8 @@
             tag,
             icon,
             iconColor,
-            referenceImage
+            referenceImage,
+            showChapters
           };
         });
         console.info(`Video Library loaded: ${Object.keys(clipLibrary).length} clip(s) - [${Object.keys(clipLibrary).join(', ')}]`);
@@ -2000,6 +2049,153 @@
       }
     });
 
+    // --- Chapter selection & multi-chapter range looping (Loop Practice only) ---
+    let detectedChapters = [];
+    let selectedChapterIndices = new Set();
+    let chapterDetectionTimer = null;
+    let chapterDetectionAttempts = 0;
+    const CHAPTER_DETECTION_INTERVAL_MS = 300;
+    const CHAPTER_DETECTION_MAX_ATTEMPTS = 25;
+
+    function findChaptersTextTrack() {
+      const tracks = refVideo.textTracks;
+      if (!tracks || tracks.length === 0) return null;
+      for (let i = 0; i < tracks.length; i++) {
+        if (tracks[i].kind === 'chapters') return tracks[i];
+      }
+      for (let i = 0; i < tracks.length; i++) {
+        const label = (tracks[i].label || '').toLowerCase();
+        if (label.includes('chapter')) return tracks[i];
+      }
+      return null;
+    }
+
+    function extractChaptersFromTrack(track) {
+      if (!track || !track.cues || track.cues.length === 0) return [];
+      const chapters = [];
+      for (let i = 0; i < track.cues.length; i++) {
+        const cue = track.cues[i];
+        const rawTitle = (cue.text || '').toString().replace(/<[^>]*>/g, '').trim();
+        chapters.push({ title: rawTitle || `Chapter ${i + 1}`, startTime: cue.startTime, endTime: cue.endTime });
+      }
+      chapters.sort((a, b) => a.startTime - b.startTime);
+      return chapters;
+    }
+
+    function formatChapterTimestamp(seconds) {
+      if (!isFinite(seconds)) return '0:00';
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    }
+
+    function renderChapterButtonStates() {
+      Array.from(refChapterBar.children).forEach((btn) => {
+        const idx = parseInt(btn.dataset.chapterIndex, 10);
+        btn.classList.toggle('active', selectedChapterIndices.has(idx));
+      });
+    }
+
+    function renderChapterButtons() {
+      refChapterBar.innerHTML = '';
+      if (detectedChapters.length === 0) {
+        refChapterBar.classList.remove('show');
+        return;
+      }
+      detectedChapters.forEach((chapter, index) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ref-chapter-btn';
+        btn.dataset.chapterIndex = index;
+        btn.textContent = `${chapter.title} (${formatChapterTimestamp(chapter.startTime)})`;
+        btn.addEventListener('click', () => onChapterButtonClick(index));
+        refChapterBar.appendChild(btn);
+      });
+      refChapterBar.classList.add('show');
+      renderChapterButtonStates();
+    }
+
+    function applyChapterSelectionToLoop() {
+      if (selectedChapterIndices.size === 0) {
+        resetLoopRange();
+      } else {
+        const minIndex = Math.min(...selectedChapterIndices);
+        const maxIndex = Math.max(...selectedChapterIndices);
+        const duration = getRefDuration();
+        loopStartTime = Math.max(0, detectedChapters[minIndex].startTime);
+        loopEndTime = duration ? Math.min(duration, detectedChapters[maxIndex].endTime) : detectedChapters[maxIndex].endTime;
+      }
+      updateRefTrackUi();
+      if (isPreviewingRef) {
+        refVideo.currentTime = loopStartTime;
+        updateRefTimeDisplay(loopStartTime);
+      }
+    }
+
+    function onChapterButtonClick(index) {
+      if (selectedChapterIndices.has(index)) {
+        selectedChapterIndices.clear();
+      } else if (selectedChapterIndices.size === 0) {
+        selectedChapterIndices.add(index);
+      } else {
+        const minIndex = Math.min(...selectedChapterIndices);
+        const maxIndex = Math.max(...selectedChapterIndices);
+        if (index === minIndex - 1 || index === maxIndex + 1) {
+          selectedChapterIndices.add(index);
+        } else {
+          selectedChapterIndices.clear();
+          selectedChapterIndices.add(index);
+        }
+      }
+      renderChapterButtonStates();
+      applyChapterSelectionToLoop();
+    }
+
+    function clearChapterSelectionHighlight() {
+      if (selectedChapterIndices.size === 0) return;
+      selectedChapterIndices.clear();
+      renderChapterButtonStates();
+    }
+
+    function stopChapterDetection() {
+      if (chapterDetectionTimer) { clearTimeout(chapterDetectionTimer); chapterDetectionTimer = null; }
+      chapterDetectionAttempts = 0;
+    }
+
+    function resetChapterState() {
+      stopChapterDetection();
+      detectedChapters = [];
+      selectedChapterIndices.clear();
+      refChapterBar.innerHTML = '';
+      refChapterBar.classList.remove('show');
+    }
+
+    function tryDetectChapters() {
+      chapterDetectionAttempts++;
+      const track = findChaptersTextTrack();
+      if (track) {
+        if (track.mode === 'disabled') track.mode = 'hidden';
+        const chapters = extractChaptersFromTrack(track);
+        if (chapters.length > 0) {
+          detectedChapters = chapters;
+          renderChapterButtons();
+          stopChapterDetection();
+          return;
+        }
+      }
+      if (chapterDetectionAttempts >= CHAPTER_DETECTION_MAX_ATTEMPTS) {
+        stopChapterDetection();
+        return;
+      }
+      chapterDetectionTimer = setTimeout(tryDetectChapters, CHAPTER_DETECTION_INTERVAL_MS);
+    }
+
+    function startChapterDetection(shouldShow) {
+      resetChapterState();
+      if (!shouldShow) return;
+      tryDetectChapters();
+    }
+
     // Builds the list of clips a given user is allowed to pick from - purely
     // whatever the Assigned Clips column grants from the Video Library. If
     // that's empty, the hub is intentionally left blank (see the empty-state
@@ -2034,7 +2230,8 @@
           tag: clip.tag || '',
           icon: clip.icon || '',
           iconColor: clip.iconColor || '#ffffff',
-          referenceImage: clip.referenceImage || ''
+          referenceImage: clip.referenceImage || '',
+          showChapters: !!clip.showChapters
         });
       });
 
@@ -2172,6 +2369,7 @@
       refVideo.setAttribute('poster', activeThumbnailUrl);
       applySupplementaryImage(clip.referenceImage);
       initializeReferenceVideoPlayback();
+      startChapterDetection(!!clip.showChapters);
 
       if (clip.noWatermark) {
         if (watermarkTimer) clearInterval(watermarkTimer);
@@ -2299,6 +2497,7 @@
       refAudioTrackBar.innerHTML = '';
       refAudioTrackBar.classList.remove('show');
       applySupplementaryImage('');
+      resetChapterState();
       closeImageZoomModal();
     }
 
