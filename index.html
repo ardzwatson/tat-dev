@@ -1068,6 +1068,101 @@
     // Read from column G, row 2 - used only for the mobile watermark's second line.
     let watermarkTagMobile = null;
 
+    // --- Data minimization: explicit column maps ---
+    // Only the columns named here are ever read out of a sheet row. Anything
+    // else present in a row exists momentarily in the raw parsed array while
+    // that row is processed, but is never copied into userDatabase/
+    // clipLibrary or otherwise retained - so any extra/internal columns
+    // someone adds to either tab later can't end up sitting in browser
+    // memory or getting rendered anywhere by accident.
+    const ACCESS_COLUMNS = {
+      PASSCODE: 0,
+      NAME: 1,
+      HLS_URL: 2,
+      THUMBNAIL_URL: 3,
+      THUMBNAIL_TIME: 4,
+      ASSIGNED_CLIPS: 5,
+      // column 6 (G) intentionally unused/reserved
+      WATERMARK_TAG: 7
+    };
+    const VIDEO_LIBRARY_COLUMNS = {
+      CLIP_ID: 0,
+      CLIP_NAME: 1,
+      HLS_URL: 2,
+      THUMBNAIL_URL: 3,
+      THUMBNAIL_TIME: 4,
+      IS_LOOP_ONLY: 6,
+      NO_WATERMARK: 7,
+      TAG: 8,
+      ICON: 9,
+      ICON_COLOR: 10,
+      REFERENCE_IMAGE: 11,
+      SHOW_CHAPTERS: 12,
+      CHAPTER_VTT_URL: 13
+    };
+
+    // --- URL sanitization (XSS / scheme-injection defense-in-depth) ---
+    // Every external asset URL that originates from sheet data (video
+    // streams, thumbnails, icons, reference images, chapter VTT links) is
+    // funneled through here at the point it's first parsed out of a row,
+    // before it's ever stored or used to populate a src/href/url(). Anything
+    // that isn't a well-formed https:// URL is rejected outright (returned
+    // as ''), which is treated identically to "this field was left blank".
+    // This stops a malicious/compromised sheet row from smuggling a
+    // javascript:, data:, or plain-http (mixed-content/unencrypted) URL into
+    // the DOM, and forces every external fetch/resource load onto HTTPS.
+    function sanitizeExternalUrl(rawUrl) {
+      if (!rawUrl) return '';
+      const trimmed = rawUrl.toString().trim();
+      if (!trimmed) return '';
+      let parsed;
+      try {
+        parsed = new URL(trimmed);
+      } catch (e) {
+        console.warn('[Security] Rejected malformed URL from sheet data:', trimmed);
+        return '';
+      }
+      if (parsed.protocol !== 'https:') {
+        console.warn('[Security] Rejected non-HTTPS URL from sheet data:', trimmed);
+        return '';
+      }
+      return parsed.href;
+    }
+
+    // --- Passcode hashing (client-side comparison only) ---
+    // HONESTY NOTE, because this matters: this is a static, backend-less
+    // client app. Nothing that ships in this file - including the pepper
+    // below - can be a true secret, since anyone can view the page source.
+    // What hashing DOES meaningfully improve: today, the Google Sheet's CSV
+    // export contains every passcode in plain text, so if that sheet's link
+    // is ever discovered, shared, cached, or indexed, every passcode leaks
+    // instantly and silently. With hashing, that same CSV only ever contains
+    // SHA-256 digests, so a leaked/discovered sheet link no longer directly
+    // hands out working login codes. It does NOT protect against a patient,
+    // targeted brute-force of one specific short/guessable passcode, because
+    // there's no server here to rate-limit attempts - that would require an
+    // actual backend. Keep the sheet's sharing settings as restrictive as
+    // possible and prefer longer, less-guessable passcodes regardless.
+    const APP_PASSCODE_PEPPER = 'kapa-sync-v31'; // not a secret - see note above
+
+    async function sha256Hex(text) {
+      const encoder = new TextEncoder();
+      const digestBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(text));
+      return Array.from(new Uint8Array(digestBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function hashPasscode(rawPasscode) {
+      const normalized = (rawPasscode || '').toString().trim().toLowerCase();
+      return sha256Hex(`${APP_PASSCODE_PEPPER}:${normalized}`);
+    }
+
+    // A sheet cell already holding a passcode's SHA-256 hash (the
+    // recommended, migrated state) is a 64-character hex string - anything
+    // else is treated as a legacy plaintext passcode still awaiting migration.
+    function looksLikeSha256Hex(value) {
+      return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value.trim());
+    }
+
     let webAudioContext = null;
     let webAudioSourceNode = null;
     let webAudioGainNode = null;
@@ -1635,36 +1730,53 @@
         // Row 1 is always the header row - never treated as data, regardless
         // of what the header cells actually say.
         const headerRow = rows[0] || [];
-        // Cell H1 (row 1, column H / index 7) drives the watermark's trailing tag.
-        if (headerRow[7]) watermarkTag = headerRow[7].trim();
-        // Cell H2 (row 2, column H) drives the mobile-only second watermark line.
+        // Cell H1 drives the watermark's trailing tag.
+        if (headerRow[ACCESS_COLUMNS.WATERMARK_TAG]) watermarkTag = headerRow[ACCESS_COLUMNS.WATERMARK_TAG].trim();
+        // Cell H2 drives the mobile-only second watermark line.
         const row2 = rows[1] || [];
-        if (row2[7]) watermarkTagMobile = row2[7].trim();
+        if (row2[ACCESS_COLUMNS.WATERMARK_TAG]) watermarkTagMobile = row2[ACCESS_COLUMNS.WATERMARK_TAG].trim();
 
-        rows.slice(1).forEach(columns => {
-          if (columns.every(v => v === '')) return; // blank row
-          const passcode = (columns[0] || '').toLowerCase();
-          const name = columns[1] || '';
-          const hlsUrl = (columns[2] || '').trim();
-          const thumbnailUrl = (columns[3] || '').trim();
-          const thumbnailTimeRaw = (columns[4] || '').trim();
+        // A plain for-of (rather than .forEach) so each row's passcode can be
+        // awaited through crypto.subtle's async hashing before moving on.
+        for (const columns of rows.slice(1)) {
+          if (columns.every(v => v === '')) continue; // blank row
+
+          const rawPasscodeCell = (columns[ACCESS_COLUMNS.PASSCODE] || '').trim();
+          const name = columns[ACCESS_COLUMNS.NAME] || '';
+          const hlsUrl = sanitizeExternalUrl((columns[ACCESS_COLUMNS.HLS_URL] || '').trim());
+          const thumbnailUrl = sanitizeExternalUrl((columns[ACCESS_COLUMNS.THUMBNAIL_URL] || '').trim());
+          const thumbnailTimeRaw = (columns[ACCESS_COLUMNS.THUMBNAIL_TIME] || '').trim();
           const thumbnailTime = thumbnailTimeRaw !== '' && !isNaN(parseFloat(thumbnailTimeRaw)) && parseFloat(thumbnailTimeRaw) >= 0
             ? parseFloat(thumbnailTimeRaw)
             : null;
           // Column F: comma-separated Clip IDs from the Video Library tab, or the
           // keyword ALL to grant every clip in the library. Blank = no hub access
           // beyond their own default clip (columns C-E above).
-          const assignedClipsRaw = (columns[5] || '').trim();
+          const assignedClipsRaw = (columns[ACCESS_COLUMNS.ASSIGNED_CLIPS] || '').trim();
           const assignedClipsAll = assignedClipsRaw.toUpperCase() === 'ALL';
           const assignedClips = assignedClipsAll
             ? []
             : assignedClipsRaw.split(',').map(id => id.trim().toLowerCase()).filter(id => id !== '');
 
-          if (!passcode || !name) return;
+          if (!rawPasscodeCell || !name) continue;
+
+          // Accept either a pre-hashed passcode (a 64-char SHA-256 hex
+          // digest - the migrated, recommended state) or a legacy plaintext
+          // passcode still sitting in the sheet. Either way, the in-memory
+          // lookup table (userDatabase) is always keyed by the HASH, never
+          // by plaintext - a plaintext cell just gets hashed here on read
+          // instead of at rest in the sheet.
+          let authKey;
+          if (looksLikeSha256Hex(rawPasscodeCell)) {
+            authKey = rawPasscodeCell.toLowerCase();
+          } else {
+            authKey = await hashPasscode(rawPasscodeCell);
+            console.warn(`[Security] Passcode for "${name}" is stored as plaintext in the sheet - replace column A with hashPasscode()'s output for that passcode to migrate it to a hash.`);
+          }
 
           // HLS URL/Thumbnail URL/Thumbnail Time are all optional per row - rows
           // that leave them blank fall back to the defaults.
-          userDatabase[passcode] = {
+          userDatabase[authKey] = {
             name,
             hlsUrl: hlsUrl || null,
             thumbnailUrl: thumbnailUrl || null,
@@ -1672,7 +1784,7 @@
             assignedClipsAll,
             assignedClips
           };
-        });
+        }
         if (gateError) { gateError.style.display = 'none'; gateError.innerText = "Incorrect passcode. Please try again."; }
       } catch (err) {
         if (gateError) { gateError.style.display = 'block'; gateError.innerText = "Security database offline."; }
@@ -1689,18 +1801,18 @@
         rows.slice(1).forEach((columns, index) => {
           const rowNum = index + 2; // sheet row number, for readable warnings
           if (columns.every(v => v === '')) return; // blank row
-          const clipId = (columns[0] || '').trim().toLowerCase();
-          const clipName = (columns[1] || '').trim();
-          const hlsUrl = (columns[2] || '').trim();
-          const thumbnailUrl = (columns[3] || '').trim();
-          const thumbnailTimeRaw = (columns[4] || '').trim();
+          const clipId = (columns[VIDEO_LIBRARY_COLUMNS.CLIP_ID] || '').trim().toLowerCase();
+          const clipName = (columns[VIDEO_LIBRARY_COLUMNS.CLIP_NAME] || '').trim();
+          const hlsUrl = sanitizeExternalUrl((columns[VIDEO_LIBRARY_COLUMNS.HLS_URL] || '').trim());
+          const thumbnailUrl = sanitizeExternalUrl((columns[VIDEO_LIBRARY_COLUMNS.THUMBNAIL_URL] || '').trim());
+          const thumbnailTimeRaw = (columns[VIDEO_LIBRARY_COLUMNS.THUMBNAIL_TIME] || '').trim();
           const thumbnailTime = thumbnailTimeRaw !== '' && !isNaN(parseFloat(thumbnailTimeRaw)) && parseFloat(thumbnailTimeRaw) >= 0
             ? parseFloat(thumbnailTimeRaw)
             : null;
 
           if (!clipId || !clipName || !hlsUrl) {
             console.warn(
-              `Video Library row ${rowNum} skipped - missing required field(s). ` +
+              `Video Library row ${rowNum} skipped - missing required field(s) (or the HLS URL failed HTTPS sanitization). ` +
               `Clip ID="${clipId}" Clip Name="${clipName}" HLS URL="${hlsUrl}". ` +
               `Expected column order: Clip ID / Clip Name / HLS URL / Thumbnail URL / Thumbnail Time.`
             );
@@ -1717,28 +1829,31 @@
           // controls, no camera/recording involved. Column H checkbox: skip the
           // watermark for this specific clip. Google Sheets exports checkboxes
           // as the literal text TRUE/FALSE.
-          const isLoopOnly = (columns[6] || '').trim().toUpperCase() === 'TRUE';
-          const noWatermark = (columns[7] || '').trim().toUpperCase() === 'TRUE';
+          const isLoopOnly = (columns[VIDEO_LIBRARY_COLUMNS.IS_LOOP_ONLY] || '').trim().toUpperCase() === 'TRUE';
+          const noWatermark = (columns[VIDEO_LIBRARY_COLUMNS.NO_WATERMARK] || '').trim().toUpperCase() === 'TRUE';
 
           // Column I: a short category/style tag shown on the clip's card and
           // used to populate the Te Ahi Kā tag filter. Column J: an icon image
-          // URL overlaid on the thumbnail. Column K: hex colour applied to
-          // both the icon (via the card's tag text) - lets each tag have a
-          // distinct at-a-glance colour without hardcoding a palette in code.
-          const tag = (columns[8] || '').trim();
-          const icon = (columns[9] || '').trim();
-          const iconColor = (columns[10] || '').trim();
+          // URL (currently parsed but not rendered anywhere in the UI).
+          // Column K: hex colour associated with the tag.
+          const tag = (columns[VIDEO_LIBRARY_COLUMNS.TAG] || '').trim();
+          const icon = sanitizeExternalUrl((columns[VIDEO_LIBRARY_COLUMNS.ICON] || '').trim());
+          const iconColor = (columns[VIDEO_LIBRARY_COLUMNS.ICON_COLOR] || '').trim();
           // Column L: an optional supplementary/reference PNG (e.g. hand
           // position diagram, lyrics sheet) shown below the video player for
-          // this clip. Blank = no image, container stays hidden.
-          const referenceImage = (columns[11] || '').trim();
+          // this clip. Blank = no image, container stays hidden. Stored as
+          // the raw (sanitized) sheet value - the Google Drive share-link ->
+          // direct-image-URL conversion happens later, at display time.
+          const referenceImage = sanitizeExternalUrl((columns[VIDEO_LIBRARY_COLUMNS.REFERENCE_IMAGE] || '').trim());
           // Column M: checkbox - only render the Chapter Selection UI on the
           // loop practice screen for clips that opt in.
-          const showChapters = parseSheetBoolean(columns[12]);
-          // Column N: Google Drive link to a .vtt file containing this
-          // clip's chapter markers. Fetched and parsed directly (rather than
-          // relying on chapters embedded in the HLS stream itself).
-          const chapterVttUrl = (columns[13] || '').trim();
+          const showChapters = parseSheetBoolean(columns[VIDEO_LIBRARY_COLUMNS.SHOW_CHAPTERS]);
+          // Column N: either a Google Drive link to a .vtt file, or literal
+          // inline WebVTT text - both are valid, so this is intentionally
+          // NOT run through sanitizeExternalUrl() here (a valid inline VTT
+          // string isn't a URL at all). The fetch path itself re-validates
+          // any URL it's given before using it.
+          const chapterVttUrl = (columns[VIDEO_LIBRARY_COLUMNS.CHAPTER_VTT_URL] || '').trim();
 
           clipLibrary[clipId] = {
             name: clipName,
@@ -1857,11 +1972,11 @@
     // new languages/dubs are added to the library. Keys are matched
     // case-insensitively against both track.lang and track.name.
     const AUDIO_TRACK_LABEL_MAP = {
-      'en': '🔥 Original', 'eng': '🔥 Original', 'english': '🔥 Original',
-      'mi': '🎤 Vocals', 'mri': '🎤 Vocals', 'mao': '🎤 Vocals', 'maori': '🎤 Vocals', 'māori': '🎤 Vocals',
-      'ja': '🎶 Instrumental', 'jpn': '🎶 Instrumental', 'ja-jp': '🎶 Instrumental', 'japanese': '🎶 Instrumental',
-      'fr': '🎸 Guitar', 'fre': '🎸 Guitar', 'fra': '🎸 Guitar', '🎸 Guitar': '🎸 Guitar',
-      'es': '🪘 Rhythm', 'spa': '🪘 Rhythm', 'spanish': '🪘 Rhythm', 'español': '🪘 Rhythm'
+      'en': 'Original', 'eng': 'Original', 'english': 'Original',
+      'mi': 'Vocals', 'mri': 'Vocals', 'mao': 'Vocals', 'maori': 'Vocals', 'māori': 'Vocals',
+      'ja': 'Instrumental', 'jpn': 'Instrumental', 'ja-jp': 'Instrumental', 'japanese': 'Instrumental',
+      'fr': 'Guitar', 'fre': 'Guitar', 'fra': 'Guitar', 'french': 'Guitar',
+      'es': 'Rhythm', 'spa': 'Rhythm', 'spanish': 'Rhythm', 'español': 'Rhythm'
     };
 
     // Fallback (track not in the map above): keep whatever hls.js reported
@@ -1952,7 +2067,7 @@
     // for this clip) - in every one of those cases the container stays
     // fully hidden via CSS (display: none), reserving no space at all.
     function applySupplementaryImage(url) {
-      const formattedUrl = formatGoogleDriveImageUrl(url);
+      const formattedUrl = sanitizeExternalUrl(formatGoogleDriveImageUrl(url));
       if (formattedUrl) {
         refSupplementaryImage.src = formattedUrl;
         refSupplementaryImageContainer.classList.add('show');
@@ -2127,7 +2242,13 @@
           `https://lh3.googleusercontent.com/d/${fileId}`
         ];
       } else {
-        baseCandidates = [trimmed];
+        // Not a recognizable Drive link - this branch is only ever reached
+        // for an actual URL (the caller already routes literal inline VTT
+        // text to parseVttText() directly, never here), so enforce the same
+        // https-only sanitization as every other externally-sourced URL in
+        // this app before it's used as a fetch/proxy target.
+        const sanitized = sanitizeExternalUrl(trimmed);
+        baseCandidates = sanitized ? [sanitized] : [];
       }
 
       const withProxies = [];
@@ -2632,7 +2753,11 @@
     async function unlockPortal() {
       const passInput = document.getElementById('gatePass');
       const unlockBtn = document.getElementById('unlockBtn');
-      const input = passInput ? passInput.value.trim().toLowerCase() : "";
+      const rawInput = passInput ? passInput.value.trim() : "";
+      // Clear the plaintext value out of the DOM as soon as it's been read,
+      // regardless of whether the login succeeds - it never needs to sit in
+      // the input field any longer than the moment of submission.
+      if (passInput) passInput.value = '';
 
       // Wait for both sheets to finish loading before doing anything - checking
       // the passcode or building the hub against a not-yet-loaded userDatabase/
@@ -2645,17 +2770,20 @@
       unlockBtn.disabled = false;
       if (gateError) gateError.style.display = 'none';
 
-      const userRecord = userDatabase[input];
+      // userDatabase is keyed by SHA-256 hash (see fetchAccessDatabase), so
+      // the entered value is hashed here and compared hash-to-hash - the raw
+      // passcode itself is never used as a lookup key or retained afterward.
+      const authKey = await hashPasscode(rawInput);
+      const userRecord = userDatabase[authKey];
       if (userRecord) {
         authorizedUser = userRecord.name;
-        currentPasscode = input;
+        currentPasscode = authKey;
 
         document.getElementById('passwordGate').style.display = 'none';
 
         showVideoHub(userRecord);
       } else {
         if (gateError) { gateError.style.display = 'block'; gateError.innerText = 'Incorrect passcode. Please try again.'; }
-        if (passInput) passInput.value = '';
       }
     }
 
@@ -2723,6 +2851,9 @@
 
       viewfinder.pause();
       viewfinder.srcObject = null;
+
+      authorizedUser = '';
+      currentPasscode = '';
 
       signOutBtn.style.display = 'none';
       changeClipBtn.style.display = 'none';
