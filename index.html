@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (31.5)</title>
+  <title>Kapa Sync Video Review (31.6)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -907,7 +907,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">31.5 Build</div>
+      <div class="gate-build-tag">31.6 Build</div>
     </div>
   </div>
 
@@ -1026,7 +1026,7 @@
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">31.5</div>
+      <div class="version-tag">31.6</div>
     </div>
   </div>
 
@@ -1857,12 +1857,16 @@
     // new languages/dubs are added to the library. Keys are matched
     // case-insensitively against both track.lang and track.name.
     const AUDIO_TRACK_LABEL_MAP = {
-      'en': 'English', 'eng': 'English', 'english': 'English',
-      'ja': 'Anime', 'jpn': 'Anime', 'ja-jp': 'Anime', 'japanese': 'Anime',
-      'fr': 'French', 'fre': 'French', 'fra': 'French', 'french': 'French',
-      'mi': 'Te Reo', 'mri': 'Te Reo', 'mao': 'Te Reo', 'maori': 'Te Reo', 'māori': 'Te Reo'
+      'en': 'Original', 'eng': 'Original', 'english': 'Original',
+      'mi': 'Vocals', 'mri': 'Vocals', 'mao': 'Vocals', 'maori': 'Vocals', 'māori': 'Vocals',
+      'ja': 'Instrumental', 'jpn': 'Instrumental', 'ja-jp': 'Instrumental', 'japanese': 'Instrumental',
+      'fr': 'Guitar', 'fre': 'Guitar', 'fra': 'Guitar', 'french': 'Guitar',
+      'es': 'Rhythm', 'spa': 'Rhythm', 'spanish': 'Rhythm', 'español': 'Rhythm'
     };
 
+    // Fallback (track not in the map above): keep whatever hls.js reported
+    // for the track's own label, or its raw language code, rather than
+    // inventing a name.
     function getAudioTrackLabel(track) {
       const langKey = (track.lang || '').toString().trim().toLowerCase();
       const nameKey = (track.name || '').toString().trim().toLowerCase();
@@ -2142,10 +2146,28 @@
     // for every single timestamp, so a file can freely mix both formats
     // (e.g. early short chapters as MM:SS.mmm, later ones past the one-hour
     // mark as HH:MM:SS.mmm) without any chapter being misparsed.
-    function parseVttTimestampToSeconds(ts) {
+    //
+    // Some chapter-export tools instead write MM:SS:CS (minutes, seconds,
+    // centiseconds) using that same three-colon-part shape - e.g.
+    // "01:23:44.000" meaning 1min 23sec 44cs (~83.44s), not 1hr 23min 44sec.
+    // videoDurationHint (typically refVideo.duration) lets that be caught:
+    // the standard HH:MM:SS interpretation is computed first, and only if it
+    // would place the timestamp past the end of the actual video is it
+    // re-interpreted as MM:SS:CS instead.
+    function parseVttTimestampToSeconds(ts, videoDurationHint) {
       const parts = ts.trim().split(':');
+
       if (parts.length === 3) {
-        return (parseInt(parts[0], 10) || 0) * 3600 + (parseInt(parts[1], 10) || 0) * 60 + (parseFloat(parts[2]) || 0);
+        const a = parseInt(parts[0], 10) || 0;
+        const b = parseInt(parts[1], 10) || 0;
+        const c = parseFloat(parts[2]) || 0;
+        const asHms = a * 3600 + b * 60 + c;
+
+        if (isFinite(videoDurationHint) && videoDurationHint > 0 && asHms > videoDurationHint) {
+          const asMmSsCs = a * 60 + b + (c / 100);
+          return asMmSsCs;
+        }
+        return asHms;
       }
       if (parts.length === 2) {
         return (parseInt(parts[0], 10) || 0) * 60 + (parseFloat(parts[1]) || 0);
@@ -2181,8 +2203,9 @@
         const match = lines[timeLineIndex].match(/([\d:.]+)\s*-->\s*([\d:.]+)/);
         if (!match) return;
 
-        const startTime = parseVttTimestampToSeconds(match[1]);
-        const endTime = parseVttTimestampToSeconds(match[2]);
+        const durationHint = refVideo.duration;
+        const startTime = parseVttTimestampToSeconds(match[1], durationHint);
+        const endTime = parseVttTimestampToSeconds(match[2], durationHint);
         const rawTitle = lines.slice(timeLineIndex + 1).join(' ').replace(/<[^>]*>/g, '').trim();
 
         chapters.push({ title: rawTitle || `Chapter ${chapters.length + 1}`, startTime, endTime });
@@ -2357,9 +2380,10 @@
       const requestToken = chapterFetchToken;
 
       let chapters;
-      if (/^webvtt/i.test(trimmedSource)) {
-        // Column N contains literal WebVTT text (starts with "WEBVTT")
-        // rather than a URL - parse it directly, no network fetch needed.
+      if (/^webvtt/i.test(trimmedSource) || trimmedSource.includes('-->')) {
+        // Column N contains literal WebVTT text (starts with "WEBVTT", or at
+        // least contains a "-->" timing line) rather than a URL - parse it
+        // directly, no network fetch needed at all.
         console.log('[Chapters] Column N contains inline WebVTT text - parsing directly (no fetch).');
         chapters = parseVttText(trimmedSource);
       } else {
