@@ -280,6 +280,32 @@
       border-color: transparent;
     }
 
+    /* Playback speed selector - Loop Practice only. Native <select> so the
+       browser itself always shows the currently active speed on the control
+       (no extra state-tracking needed to keep the UI in sync). */
+    .ref-speed-select {
+      display: none;
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 20;
+      font-family: 'Marcellus', serif;
+      font-size: 11px;
+      font-weight: bold;
+      color: white;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 14px;
+      padding: 6px 10px;
+      cursor: pointer;
+      outline: none;
+    }
+    #appContent.loop-only-mode .ref-speed-select { display: block; }
+
+    @media (orientation: landscape) {
+      .ref-speed-select { top: 6px !important; right: 6px !important; font-size: 9px !important; padding: 4px 6px !important; }
+    }
+
     /* Supplementary reference image (Video Library column L) shown below the
        video player. Hidden entirely (no space reserved) when a clip has no
        image URL. Capped at a max-height so it can't crowd out the video area
@@ -951,6 +977,13 @@
         <button type="button" class="ref-fullscreen-btn" id="refFullscreenBtn" aria-label="Toggle fullscreen">⛶</button>
         <button type="button" class="ref-fs-playpause-btn" id="refFsPlayPauseBtn" aria-label="Play/Pause">▶</button>
         <div class="ref-audio-track-bar" id="refAudioTrackBar"></div>
+        <select class="ref-speed-select" id="refSpeedSelect" aria-label="Playback speed">
+          <option value="0.5">0.5x</option>
+          <option value="0.75">0.75x</option>
+          <option value="1" selected>1.0x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+        </select>
       </div>
       
       <div class="box" id="cameraBox">
@@ -1181,6 +1214,7 @@
     const refFullscreenBtn = document.getElementById('refFullscreenBtn');
     const refFsPlayPauseBtn = document.getElementById('refFsPlayPauseBtn');
     const refAudioTrackBar = document.getElementById('refAudioTrackBar');
+    const refSpeedSelect = document.getElementById('refSpeedSelect');
     const refSupplementaryImageContainer = document.getElementById('refSupplementaryImageContainer');
     const refSupplementaryImage = document.getElementById('refSupplementaryImage');
     const imageZoomModal = document.getElementById('imageZoomModal');
@@ -1975,8 +2009,9 @@
       'en': '🔥 Original', 'eng': '🔥 Original', 'english': '🔥 Original',
       'mi': '🎤 Vocals', 'mri': '🎤 Vocals', 'mao': '🎤 Vocals', 'maori': '🎤 Vocals', 'māori': '🎤 Vocals',
       'ja': '🎶 Instrumental', 'jpn': '🎶 Instrumental', 'ja-jp': '🎶 Instrumental', 'japanese': '🎶 Instrumental',
-      'fr': '🎸 Guitar', 'fre': '🎸 Guitar', 'fra': '🎸 Guitar', '🎸 Guitar': '🎸 Guitar',
+      'fr': '🎸 Guitar', 'fre': '🎸 Guitar', 'fra': '🎸 Guitar', 'french': '🎸 Guitar',
       'es': '🪘 Rhythm', 'spa': '🪘 Rhythm', 'spanish': '🪘 Rhythm', 'español': '🪘 Rhythm'
+      'it': '▶️ Parakitihi', 'ita': '▶️ Parakitihi', 'italian': '▶️ Parakitihi', 'italiano': '▶️ Parakitihi',
     };
 
     // Fallback (track not in the map above): keep whatever hls.js reported
@@ -2027,7 +2062,42 @@
       highlightActiveAudioTrackButton(index);
     }
 
-    // --- Supplementary reference image (below the video player) ---
+    // --- Playback speed control (Loop Practice only) ---
+    // A native <select> is used deliberately: the browser itself always
+    // displays whichever <option> is currently selected, so the "visually
+    // indicate the active speed" requirement is satisfied for free with no
+    // extra state-syncing code needed.
+    refSpeedSelect.addEventListener('change', () => {
+      const speed = parseFloat(refSpeedSelect.value) || 1;
+      refVideo.playbackRate = speed;
+    });
+
+    // Resets both the video's actual rate and the dropdown's displayed value
+    // back to 1.0x - called whenever a new clip is loaded, so a fast/slow
+    // setting from a previous clip never silently carries over.
+    function resetPlaybackSpeed() {
+      refSpeedSelect.value = '1';
+      refVideo.playbackRate = 1;
+    }
+
+    // --- Spacebar shortcut: toggle Play/Pause on the active Loop Practice video ---
+    document.addEventListener('keydown', (e) => {
+      const isSpacebar = e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
+      if (!isSpacebar) return;
+
+      // Never hijack Space while the user is actually typing somewhere (a
+      // search box, the passcode field, the tag filter dropdown, etc.).
+      if (e.target && typeof e.target.matches === 'function' && e.target.matches('input, textarea, select')) return;
+
+      // Only meaningful on the Loop Practice screen, while it's actually
+      // visible, and not while the full-screen image zoom modal has focus.
+      if (!currentClipIsLoopOnly) return;
+      if (document.getElementById('appContent').style.display === 'none') return;
+      if (imageZoomModal.classList.contains('show')) return;
+
+      e.preventDefault(); // stop the page from scrolling on Space
+      previewRefBtn.click(); // reuses the exact same play/pause state machine as tapping the button
+    });
 
     // Converts a Google Drive "view" share link into a direct, hotlinkable
     // image URL. Handles both the common /file/d/FILE_ID/view form and the
@@ -2654,6 +2724,7 @@
       activeHlsUrl = clip.hlsUrl;
       activeThumbnailUrl = clip.thumbnailUrl;
       activeAlignTime = clip.thumbnailTime;
+      resetPlaybackSpeed();
 
       videoHubScreen.classList.remove('show');
       document.getElementById('appContent').style.display = 'flex';
@@ -2691,6 +2762,7 @@
       activeHlsUrl = clip.hlsUrl;
       activeThumbnailUrl = clip.thumbnailUrl;
       activeAlignTime = clip.thumbnailTime;
+      resetPlaybackSpeed();
 
       videoHubScreen.classList.remove('show');
       document.getElementById('appContent').style.display = 'flex';
@@ -2838,6 +2910,7 @@
       applySupplementaryImage('');
       resetChapterState();
       closeImageZoomModal();
+      resetPlaybackSpeed();
     }
 
     function handleSignOut() {
