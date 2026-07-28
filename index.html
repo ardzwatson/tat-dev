@@ -250,16 +250,26 @@
       left: 16px;
       right: 16px;
       bottom: 56px;
+      /* Generous invisible hit area (well beyond the thin visible track) so
+         the bar is comfortably tappable/draggable with a finger. */
+      height: 28px;
+      align-items: center;
+      z-index: 25; /* above videoBox's own click-to-toggle-play/pause handler region */
+      opacity: 1;
+      transition: opacity 0.25s ease;
+      touch-action: none; /* this element owns horizontal drag - don't let the page try to scroll/pan during a scrub */
+      cursor: pointer;
+    }
+    .ref-fs-progress-bar.fade-out { opacity: 0; pointer-events: none; }
+    #videoBox.ref-is-fullscreen .ref-fs-progress-bar { display: flex; }
+    .ref-fs-progress-track {
+      width: 100%;
       height: 5px;
       background: rgba(255,255,255,0.25);
       border-radius: 3px;
-      z-index: 20;
       overflow: hidden;
-      opacity: 1;
-      transition: opacity 0.25s ease;
+      pointer-events: none; /* all pointer handling happens on the larger .ref-fs-progress-bar hit area */
     }
-    .ref-fs-progress-bar.fade-out { opacity: 0; pointer-events: none; }
-    #videoBox.ref-is-fullscreen .ref-fs-progress-bar { display: block; }
     .ref-fs-progress-fill {
       height: 100%;
       width: 0%;
@@ -541,9 +551,17 @@
        video's own fullscreen toggle (bottom-right) and volume control
        (bottom-left). Relocate both buttons to the top of the screen instead,
        as small horizontal pills, so they never overlap the video controls.
-       Scoped tightly by max-height so normal landscape tablets/desktops and
-       portrait phones are completely unaffected. */
-    @media screen and (orientation: landscape) and (max-height: 600px) {
+       Matched on EITHER a narrow max-width OR a short max-height (comma =
+       OR across the two media queries) rather than max-height alone: mobile
+       browsers report an unstable window height for roughly the first
+       second after load/rotation while the address-bar/toolbar chrome
+       finishes collapsing, which can flip a height-only query in and out of
+       matching and made this layout visibly "snap back" after ~1s. Width is
+       unaffected by that chrome-collapse animation, so anchoring on width
+       keeps the fix permanently applied on actual phones while still
+       covering short desktop windows via the max-height clause. */
+    @media screen and (orientation: landscape) and (max-width: 900px),
+           screen and (orientation: landscape) and (max-height: 600px) {
       #signOutBtn {
         top: env(safe-area-inset-top, 4px);
         left: 8px;
@@ -1014,7 +1032,7 @@
         </div>
         <button type="button" class="ref-fullscreen-btn" id="refFullscreenBtn" aria-label="Toggle fullscreen">⛶</button>
         <button type="button" class="ref-fs-playpause-btn" id="refFsPlayPauseBtn" aria-label="Play/Pause">▶</button>
-        <div class="ref-fs-progress-bar" id="refFsProgressBar"><div class="ref-fs-progress-fill" id="refFsProgressFill"></div></div>
+        <div class="ref-fs-progress-bar" id="refFsProgressBar"><div class="ref-fs-progress-track"><div class="ref-fs-progress-fill" id="refFsProgressFill"></div></div></div>
         <div class="ref-audio-track-bar" id="refAudioTrackBar"></div>
         <select class="ref-speed-select" id="refSpeedSelect" aria-label="Playback speed">
           <option value="0.5">0.5x</option>
@@ -1610,6 +1628,7 @@
     videoBox.addEventListener('click', (e) => {
       if (!isRefFullscreen()) return;
       if (e.target === refFsPlayPauseBtn || e.target === refFullscreenBtn) return;
+      if (refFsProgressBar.contains(e.target)) return;
       if (refVideo.paused) refVideo.play().catch(() => {});
       else refVideo.pause();
       resetFsPlayPauseFadeTimer();
@@ -1621,6 +1640,55 @@
       else refVideo.pause();
       resetFsPlayPauseFadeTimer();
     });
+
+    // --- Full-screen progress bar: click/drag/touch-scrub to seek ---
+    // Pointer Events (not native <input type=range>) so a single handler
+    // covers mouse, touch, and pen uniformly, matching the pattern already
+    // used for the inline loop-range track.
+    let fsProgressDragging = false;
+
+    function seekFsProgressToClientX(clientX) {
+      const duration = getRefDuration();
+      if (!duration) return;
+      const rect = refFsProgressBar.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      refVideo.currentTime = fraction * duration;
+      updateFsProgressFill();
+    }
+
+    refFsProgressBar.addEventListener('pointerdown', (e) => {
+      if (!isRefFullscreen()) return;
+      // Stop this from ever reaching videoBox's click-to-toggle-play/pause
+      // handler (belt-and-suspenders alongside the .contains() check above -
+      // pointerdown/pointerup and the click they generate are distinct event
+      // types, so both defenses matter).
+      e.preventDefault();
+      e.stopPropagation();
+      fsProgressDragging = true;
+      refFsProgressBar.setPointerCapture(e.pointerId);
+      seekFsProgressToClientX(e.clientX);
+      resetFsPlayPauseFadeTimer();
+    });
+
+    refFsProgressBar.addEventListener('pointermove', (e) => {
+      if (!fsProgressDragging) return;
+      seekFsProgressToClientX(e.clientX);
+      resetFsPlayPauseFadeTimer();
+    });
+
+    function endFsProgressDrag(e) {
+      if (!fsProgressDragging) return;
+      fsProgressDragging = false;
+      try { refFsProgressBar.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+    }
+    refFsProgressBar.addEventListener('pointerup', endFsProgressDrag);
+    refFsProgressBar.addEventListener('pointercancel', endFsProgressDrag);
+
+    // Extra safety net: a plain tap dispatches pointerdown/up AND a separate
+    // 'click' event afterward - make sure that click never bubbles up to
+    // videoBox's own click-to-toggle-play/pause handler either.
+    refFsProgressBar.addEventListener('click', (e) => { e.stopPropagation(); });
 
     videoBox.addEventListener('mousemove', () => { if (isRefFullscreen()) resetFsPlayPauseFadeTimer(); });
     videoBox.addEventListener('touchstart', () => { if (isRefFullscreen()) resetFsPlayPauseFadeTimer(); });
