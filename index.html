@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (31.6)</title>
+  <title>Kapa Sync Video Review (31.7)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -239,6 +239,34 @@
     .ref-fs-playpause-btn.fade-out { opacity: 0; pointer-events: none; }
     #videoBox.ref-is-fullscreen .ref-fs-playpause-btn { display: flex; }
 
+    /* Full-screen progress bar overlay - only exists while actually in
+       fullscreen (it has no purpose/space in the normal inline layout, which
+       already has the full loop-range track below the video). Fades in/out
+       on the exact same timer as the center play/pause button, positioned
+       well clear of the corner volume/fullscreen-toggle controls. */
+    .ref-fs-progress-bar {
+      display: none;
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 56px;
+      height: 5px;
+      background: rgba(255,255,255,0.25);
+      border-radius: 3px;
+      z-index: 20;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 0.25s ease;
+    }
+    .ref-fs-progress-bar.fade-out { opacity: 0; pointer-events: none; }
+    #videoBox.ref-is-fullscreen .ref-fs-progress-bar { display: block; }
+    .ref-fs-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #3396ff, #007aff);
+      border-radius: 3px;
+    }
+
     /* Audio track switcher - Loop Practice clips only. Hidden until JS finds
        more than one HLS audio track for the current clip and populates it. */
     .ref-audio-track-bar {
@@ -301,10 +329,6 @@
       outline: none;
     }
     #appContent.loop-only-mode .ref-speed-select { display: block; }
-
-    @media (orientation: landscape) {
-      .ref-speed-select { top: 6px !important; right: 6px !important; font-size: 9px !important; padding: 4px 6px !important; }
-    }
 
     /* Supplementary reference image (Video Library column L) shown below the
        video player. Hidden entirely (no space reserved) when a clip has no
@@ -508,6 +532,7 @@
       .ref-fullscreen-btn { width: 30px !important; height: 30px !important; font-size: 14px !important; bottom: 6px !important; right: 6px !important; }
       .ref-volume-control { bottom: 6px !important; left: 6px !important; padding: 4px 8px !important; gap: 5px !important; }
       .ref-volume-slider { width: 50px !important; }
+      .ref-speed-select { top: 6px !important; right: 6px !important; font-size: 9px !important; padding: 4px 6px !important; }
     }
 
     /* Mobile landscape only (short-viewport phones held sideways): the vertical
@@ -542,6 +567,19 @@
         font-size: 9px;
       }
       #changeClipBtn:hover { padding-right: 10px; background-color: rgba(0, 0, 0, 0.35); }
+
+      /* Full-Screen toggle stays bottom-right (mirrors Portrait) - reaffirmed
+         explicitly here since this block also touches nearby element
+         positions. Speed control is pushed down clear of the now-top-docked
+         Change Clip pill above it, instead of both sitting at the same
+         top-right spot and overlapping. */
+      .ref-fullscreen-btn { bottom: 6px !important; right: 6px !important; }
+      .ref-speed-select {
+        top: 40px !important;
+        right: 8px !important;
+        font-size: 9px !important;
+        padding: 4px 6px !important;
+      }
     }
 
     .box { position: relative; width: 100%; flex: 1 1 0%; height: 0; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
@@ -933,7 +971,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">31.6 Build</div>
+      <div class="gate-build-tag">31.7 Build</div>
     </div>
   </div>
 
@@ -976,6 +1014,7 @@
         </div>
         <button type="button" class="ref-fullscreen-btn" id="refFullscreenBtn" aria-label="Toggle fullscreen">⛶</button>
         <button type="button" class="ref-fs-playpause-btn" id="refFsPlayPauseBtn" aria-label="Play/Pause">▶</button>
+        <div class="ref-fs-progress-bar" id="refFsProgressBar"><div class="ref-fs-progress-fill" id="refFsProgressFill"></div></div>
         <div class="ref-audio-track-bar" id="refAudioTrackBar"></div>
         <select class="ref-speed-select" id="refSpeedSelect" aria-label="Playback speed">
           <option value="0.5">0.5x</option>
@@ -1059,7 +1098,7 @@
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">31.6</div>
+      <div class="version-tag">31.7</div>
     </div>
   </div>
 
@@ -1213,6 +1252,8 @@
     const videoBox = document.getElementById('videoBox');
     const refFullscreenBtn = document.getElementById('refFullscreenBtn');
     const refFsPlayPauseBtn = document.getElementById('refFsPlayPauseBtn');
+    const refFsProgressBar = document.getElementById('refFsProgressBar');
+    const refFsProgressFill = document.getElementById('refFsProgressFill');
     const refAudioTrackBar = document.getElementById('refAudioTrackBar');
     const refSpeedSelect = document.getElementById('refSpeedSelect');
     const refSupplementaryImageContainer = document.getElementById('refSupplementaryImageContainer');
@@ -1499,10 +1540,12 @@
       videoBox.classList.toggle('ref-is-fullscreen', isRefFullscreen());
       if (isRefFullscreen()) {
         updateFsPlayPauseIcon();
+        updateFsProgressFill();
         resetFsPlayPauseFadeTimer();
       } else {
         clearTimeout(fsPlayPauseFadeTimeout);
         refFsPlayPauseBtn.classList.remove('fade-out');
+        refFsProgressBar.classList.remove('fade-out');
       }
     }
     document.addEventListener('fullscreenchange', updateFullscreenBtnIcon);
@@ -1530,23 +1573,38 @@
       else if (videoBox.webkitRequestFullscreen) videoBox.webkitRequestFullscreen();
     });
 
-    // --- Fullscreen center play/pause button ---
+    // --- Fullscreen center play/pause button + progress bar ---
     // Mirrors the .zoom-container fade-out pattern from the camera screen:
     // shown on load/tap/move, auto-hides after a short idle period while
-    // fullscreen playback is running.
+    // fullscreen playback is running. The progress bar fades in perfect
+    // lockstep with the play/pause button (same timer, same trigger events).
     let fsPlayPauseFadeTimeout = null;
 
     function resetFsPlayPauseFadeTimer() {
       if (!isRefFullscreen()) return;
       refFsPlayPauseBtn.classList.remove('fade-out');
+      refFsProgressBar.classList.remove('fade-out');
       clearTimeout(fsPlayPauseFadeTimeout);
       fsPlayPauseFadeTimeout = setTimeout(() => {
-        if (isRefFullscreen() && !refVideo.paused) refFsPlayPauseBtn.classList.add('fade-out');
+        if (isRefFullscreen() && !refVideo.paused) {
+          refFsPlayPauseBtn.classList.add('fade-out');
+          refFsProgressBar.classList.add('fade-out');
+        }
       }, 2500);
     }
 
     function updateFsPlayPauseIcon() {
       refFsPlayPauseBtn.textContent = refVideo.paused ? '▶' : '⏸';
+    }
+
+    // Fills the progress bar based on the video's position within the
+    // current loop range (or the full clip if the range hasn't been
+    // narrowed) - kept in sync from the existing timeupdate handler below.
+    function updateFsProgressFill() {
+      const duration = getRefDuration();
+      if (!duration) { refFsProgressFill.style.width = '0%'; return; }
+      const pct = Math.max(0, Math.min(100, (refVideo.currentTime / duration) * 100));
+      refFsProgressFill.style.width = `${pct}%`;
     }
 
     videoBox.addEventListener('click', (e) => {
@@ -2010,7 +2068,8 @@
       'mi': '🎤 Vocals', 'mri': '🎤 Vocals', 'mao': '🎤 Vocals', 'maori': '🎤 Vocals', 'māori': '🎤 Vocals',
       'ja': '🎶 Instrumental', 'jpn': '🎶 Instrumental', 'ja-jp': '🎶 Instrumental', 'japanese': '🎶 Instrumental',
       'fr': '🎸 Guitar', 'fre': '🎸 Guitar', 'fra': '🎸 Guitar', 'french': '🎸 Guitar',
-      'es': '🪘 Rhythm', 'spa': '🪘 Rhythm', 'spanish': '🪘 Rhythm', 'español': '🪘 Rhythm'
+      'es': '🪘 Rhythm', 'spa': '🪘 Rhythm', 'spanish': '🪘 Rhythm', 'español': '🪘 Rhythm',
+      'it': '▶️ Parakitihi', 'ita': '▶️ Parakitihi', 'italian': '▶️ Parakitihi', 'italiano': '▶️ Parakitihi'
     };
 
     // Fallback (track not in the map above): keep whatever hls.js reported
@@ -2904,6 +2963,8 @@
       document.getElementById('appContent').classList.remove('loop-only-mode');
       videoBox.classList.remove('ref-is-fullscreen');
       refFsPlayPauseBtn.classList.remove('fade-out');
+      refFsProgressBar.classList.remove('fade-out');
+      refFsProgressFill.style.width = '0%';
       refAudioTrackBar.innerHTML = '';
       refAudioTrackBar.classList.remove('show');
       applySupplementaryImage('');
@@ -3043,7 +3104,14 @@
       if (loopOnlyAwaitingFirstPlay) {
         // First real tap on a staged Loop Practice screen - start playback
         // without resetting the loop range (preserves any pre-play handle
-        // adjustments the user already made).
+        // adjustments the user already made). If duration wasn't known yet
+        // when the screen was staged (a very fast tap could beat
+        // loadedmetadata), loopEndTime may still be 0 here - make sure it
+        // reflects the full clip before playback starts, so the default
+        // loop always spans the whole clip rather than looping at 0:00.
+        if (getRefDuration() && loopEndTime <= 0) {
+          resetLoopRange();
+        }
         loopOnlyAwaitingFirstPlay = false;
         previewRefBtn.classList.remove('ready-to-play');
         previewRefBtn.classList.add('previewing');
@@ -3542,6 +3610,7 @@
           updateRefTrackUi();
           updateRefTimeDisplay(refVideo.currentTime);
         }
+        if (isRefFullscreen()) updateFsProgressFill();
         // Loop Practice clips always loop regardless of range narrowing;
         // camera-flow Preview Ref only loops once the user has actually
         // narrowed the range - default behavior there is to play straight
@@ -3549,6 +3618,20 @@
         if ((currentClipIsLoopOnly || isLoopRangeNarrowed()) && refVideo.currentTime >= loopEndTime - 0.05) {
           refVideo.currentTime = loopStartTime;
         }
+      }
+    });
+
+    // Safety net for auto-looping: HLS streams in particular can fire their
+    // native 'ended' event without an intervening 'timeupdate' ever having
+    // crossed the loopEndTime-0.05 threshold above (the last timeupdate tick
+    // before the stream's true end can land just short of it) - when that
+    // happens the video just naturally pauses at the end instead of looping.
+    // Explicitly catching 'ended' here guarantees the loop always continues
+    // seamlessly, with no dependency on exactly when the last timeupdate fired.
+    refVideo.addEventListener('ended', () => {
+      if (isPreviewingRef && !isRecordingMode && !isReviewMode) {
+        refVideo.currentTime = loopStartTime;
+        refVideo.play().catch(() => {});
       }
     });
 
