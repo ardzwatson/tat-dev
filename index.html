@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (PRE 32.0)</title>
+  <title>Kapa Sync Video Review (32.0 - Alpha)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -997,7 +997,12 @@
       z-index: 9997;
       display: none;
       flex-direction: column;
-      background: linear-gradient(165deg, #201033 0%, #241a3d 45%, #100a1c 100%);
+      background-image:
+        linear-gradient(165deg, rgba(30,8,4,0.88) 0%, rgba(46,14,6,0.85) 45%, rgba(12,4,2,0.92) 100%),
+        url('https://lh3.googleusercontent.com/d/1B2Dk1T1vTjx0QaqoJIPZs9wvx09M60AG');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
       color: white;
       box-sizing: border-box;
       padding: env(safe-area-inset-top, 12px) 14px calc(env(safe-area-inset-bottom, 0px) + 12px) 14px;
@@ -1009,18 +1014,18 @@
       display: flex;
       align-items: center;
       flex-shrink: 0;
-      background: #16131f;
+      background: rgba(30, 10, 6, 0.85);
       border-radius: 12px;
       overflow: hidden;
       margin-bottom: 14px;
-      border: 1px solid #2c2436;
+      border: 1px solid rgba(255,123,0,0.3);
     }
     .audio-header-tag {
       font-family: 'Marcellus', serif;
       font-weight: bold;
       font-size: 15px;
-      color: #ff6b6b;
-      background: rgba(255,107,107,0.12);
+      color: #FFB300;
+      background: rgba(255,123,0,0.18);
       padding: 12px 16px;
       flex-shrink: 0;
     }
@@ -1039,15 +1044,15 @@
     }
     .audio-back-btn {
       font-size: 14px;
-      color: #aaa;
+      color: #d9a066;
       background: transparent;
       border: none;
-      border-left: 1px solid #2c2436;
+      border-left: 1px solid rgba(255,123,0,0.3);
       padding: 12px 16px;
       cursor: pointer;
       flex-shrink: 0;
     }
-    .audio-back-btn:hover { color: white; background: rgba(255,255,255,0.05); }
+    .audio-back-btn:hover { color: white; background: rgba(255,123,0,0.12); }
 
     .audio-scroll-area {
       flex: 1 1 auto;
@@ -1057,35 +1062,36 @@
       flex-direction: column;
     }
 
+    .audio-media-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+    }
     .audio-media-card {
       position: relative;
-      width: 100%;
-      aspect-ratio: 16 / 10;
-      max-height: 34vh;
-      border-radius: 16px;
+      width: min(60vw, 260px);
+      aspect-ratio: 1 / 1;
+      border-radius: 50%;
       overflow: hidden;
       background: #000;
       flex-shrink: 0;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5), 0 0 0 3px rgba(255,123,0,0.35);
     }
-    .audio-media-card video,
     .audio-media-card img {
       width: 100%;
       height: 100%;
       object-fit: cover;
-      display: none;
+      display: block;
     }
-    .audio-media-card.show-video video { display: block; }
-    .audio-media-card.show-thumb img { display: block; }
     .audio-media-title {
-      position: absolute;
-      left: 0; right: 0; bottom: 0;
-      padding: 10px 14px;
+      margin-top: 14px;
+      text-align: center;
       font-family: 'Marcellus', serif;
-      font-size: 13px;
+      font-size: 16px;
       font-weight: bold;
       color: white;
-      background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+      text-shadow: 0 1px 4px rgba(0,0,0,0.6);
     }
 
     .audio-quick-actions {
@@ -1104,7 +1110,8 @@
       line-height: 1;
       padding: 4px;
     }
-    .audio-icon-btn.is-favorited { filter: drop-shadow(0 0 4px rgba(255,45,85,0.6)); }
+    .audio-icon-btn.is-favorited { filter: drop-shadow(0 0 5px rgba(255,123,0,0.75)); }
+    #audioFavoriteBtn:not(.is-favorited) { opacity: 0.3; }
 
     .audio-progress-track {
       position: relative;
@@ -1122,7 +1129,7 @@
       top: 0; left: 0; bottom: 0;
       width: 0%;
       border-radius: 3px;
-      background: linear-gradient(90deg, #ff2d55, #ff9500);
+      background: linear-gradient(90deg, #B71C1C, #FF7B00, #FFC107);
     }
     .audio-progress-handle {
       position: absolute;
@@ -1142,7 +1149,7 @@
       justify-content: space-between;
       font-family: 'Marcellus', serif;
       font-size: 13px;
-      color: #ccc;
+      color: #e0b088;
       margin-top: 8px;
       flex-shrink: 0;
     }
@@ -1164,20 +1171,20 @@
       opacity: 0.85;
       padding: 4px;
     }
-    .audio-ctrl-btn.active { opacity: 1; filter: drop-shadow(0 0 5px rgba(255,107,107,0.8)); }
+    .audio-ctrl-btn.active { opacity: 1; filter: drop-shadow(0 0 5px rgba(255,193,7,0.85)); }
     .audio-play-btn {
       width: 66px;
       height: 66px;
       border-radius: 50%;
       border: none;
-      background: linear-gradient(135deg, #ff9a5a, #ff5f7e);
+      background: linear-gradient(135deg, #FF7B00, #B71C1C);
       color: white;
       font-size: 26px;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      box-shadow: 0 6px 16px rgba(255,95,126,0.4);
+      box-shadow: 0 6px 18px rgba(255,123,0,0.45);
     }
     .audio-play-btn:active { transform: scale(0.96); }
 
@@ -1194,11 +1201,11 @@
       border-radius: 10px;
       cursor: pointer;
     }
-    .audio-track-row.active { background: rgba(255,107,107,0.12); box-shadow: 0 0 0 1px rgba(255,107,107,0.35) inset; }
+    .audio-track-row.active { background: rgba(255,123,0,0.14); box-shadow: 0 0 0 1px rgba(255,123,0,0.4) inset; }
     .audio-track-index {
       font-family: 'Marcellus', serif;
       font-size: 13px;
-      color: #8e8e93;
+      color: #d9a066;
       width: 22px;
       flex-shrink: 0;
       text-align: center;
@@ -1210,7 +1217,7 @@
       font-size: 9px;
       font-weight: bold;
       color: white;
-      background: #F5A525;
+      background: linear-gradient(135deg, #F5A525, #FF7B00);
       border-radius: 5px;
       padding: 2px 6px;
       text-transform: uppercase;
@@ -1239,7 +1246,9 @@
       cursor: pointer;
       color: white;
       padding: 2px;
+      opacity: 0.3;
     }
+    .audio-track-heart.is-favorited { opacity: 1; filter: drop-shadow(0 0 4px rgba(255,123,0,0.7)); }
     .audio-track-menu-btn {
       font-size: 16px;
       background: transparent;
@@ -1295,7 +1304,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">PRE 32.0 Build</div>
+      <div class="gate-build-tag">32.0 Build</div>
     </div>
   </div>
 
@@ -1324,9 +1333,10 @@
     </div>
 
     <div class="audio-scroll-area">
-      <div class="audio-media-card" id="audioMediaCard">
-        <video id="audioMediaVideo" muted loop playsinline webkit-playsinline crossorigin="anonymous"></video>
-        <img id="audioMediaThumb" alt="" crossorigin="anonymous" referrerpolicy="no-referrer">
+      <div class="audio-media-wrap">
+        <div class="audio-media-card" id="audioMediaCard">
+          <img id="audioMediaThumb" alt="" crossorigin="anonymous" referrerpolicy="no-referrer">
+        </div>
         <div class="audio-media-title" id="audioMediaTitle"></div>
       </div>
 
@@ -1545,7 +1555,8 @@
       AUDIO_STREAM_URL: 14,
       PLAYLIST_TAGS: 15,
       ARTIST: 16,
-      TAG_2: 17
+      TAG_2: 17,
+      AUDIO_THUMBNAIL_URL: 18
     };
 
     // --- URL sanitization (XSS / scheme-injection defense-in-depth) ---
@@ -1657,7 +1668,6 @@
     const audioPlaylistSelect = document.getElementById('audioPlaylistSelect');
     const audioPlayerBackBtn = document.getElementById('audioPlayerBackBtn');
     const audioMediaCard = document.getElementById('audioMediaCard');
-    const audioMediaVideo = document.getElementById('audioMediaVideo');
     const audioMediaThumb = document.getElementById('audioMediaThumb');
     const audioMediaTitle = document.getElementById('audioMediaTitle');
     const audioFavoriteBtn = document.getElementById('audioFavoriteBtn');
@@ -2413,6 +2423,10 @@
           // Column R: a secondary style/category tag shown as a small pill
           // next to the track title in the Audio Player's queue.
           const tag2 = (columns[VIDEO_LIBRARY_COLUMNS.TAG_2] || '').trim();
+          // Column S: circular artwork shown on the Audio Player. Falls back
+          // to Column D (the video thumbnail) at display time if this is
+          // left blank for a track.
+          const audioThumbnailUrl = sanitizeExternalUrl((columns[VIDEO_LIBRARY_COLUMNS.AUDIO_THUMBNAIL_URL] || '').trim());
 
           clipLibrary[clipId] = {
             name: clipName,
@@ -2430,7 +2444,8 @@
             audioStreamUrl,
             playlistTags,
             artist,
-            tag2
+            tag2,
+            audioThumbnailUrl
           };
         });
         console.info(`Video Library loaded: ${Object.keys(clipLibrary).length} clip(s) - [${Object.keys(clipLibrary).join(', ')}]`);
@@ -3166,7 +3181,8 @@
           audioStreamUrl: clip.audioStreamUrl || '',
           playlistTags: Array.isArray(clip.playlistTags) ? clip.playlistTags : [],
           artist: clip.artist || '',
-          tag2: clip.tag2 || ''
+          tag2: clip.tag2 || '',
+          audioThumbnailUrl: clip.audioThumbnailUrl || ''
         });
       });
 
@@ -3313,6 +3329,72 @@
       return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
     }
 
+    // --- Media Session API: lock-screen/notification playback controls ---
+    // This is what lets audio keep playing (with working controls) when a
+    // mobile screen locks or the tab/app is backgrounded - the browser talks
+    // to the OS's now-playing UI directly via this API rather than anything
+    // this page can drive itself. Actual continued background playback is
+    // still ultimately up to the browser/OS (e.g. Chrome on Android and
+    // Safari on iOS both support this for regular tabs; some browsers throttle
+    // background tabs more aggressively unless the site is installed as a
+    // PWA), but this is the correct/complete web-standard implementation.
+    function updateMediaSessionMetadata(track) {
+      if (!('mediaSession' in navigator) || !track) return;
+      const artworkUrl = track.audioThumbnailUrl || track.thumbnailUrl || DEFAULT_THUMBNAIL_URL;
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: track.name || '',
+          artist: track.artist || '',
+          album: 'Kapa Sync Audio Player',
+          artwork: artworkUrl ? [
+            { src: artworkUrl, sizes: '96x96', type: 'image/png' },
+            { src: artworkUrl, sizes: '256x256', type: 'image/png' },
+            { src: artworkUrl, sizes: '512x512', type: 'image/png' }
+          ] : []
+        });
+      } catch (e) {
+        console.warn('[MediaSession] Failed to set metadata:', e);
+      }
+    }
+
+    let mediaSessionHandlersReady = false;
+    function setupMediaSessionHandlersOnce() {
+      if (mediaSessionHandlersReady || !('mediaSession' in navigator)) return;
+      mediaSessionHandlersReady = true;
+
+      const safeSetHandler = (action, handler) => {
+        try { navigator.mediaSession.setActionHandler(action, handler); }
+        catch (e) { /* action not supported by this browser - ignore */ }
+      };
+
+      safeSetHandler('play', () => { audioPlayerElement.play().catch(() => {}); });
+      safeSetHandler('pause', () => { audioPlayerElement.pause(); });
+      safeSetHandler('previoustrack', () => playAudioAtOrderPosition(audioQueuePosition - 1, true));
+      safeSetHandler('nexttrack', () => playAudioAtOrderPosition(audioQueuePosition + 1, true));
+      safeSetHandler('seekto', (details) => {
+        if (details && details.seekTime != null && isFinite(audioPlayerElement.duration)) {
+          audioPlayerElement.currentTime = details.seekTime;
+          updateAudioProgressUi();
+        }
+      });
+      safeSetHandler('seekbackward', (details) => {
+        const skip = (details && details.seekOffset) || 10;
+        audioPlayerElement.currentTime = Math.max(0, audioPlayerElement.currentTime - skip);
+      });
+      safeSetHandler('seekforward', (details) => {
+        const skip = (details && details.seekOffset) || 10;
+        const duration = audioPlayerElement.duration;
+        audioPlayerElement.currentTime = isFinite(duration)
+          ? Math.min(duration, audioPlayerElement.currentTime + skip)
+          : audioPlayerElement.currentTime + skip;
+      });
+    }
+
+    function updateMediaSessionPlaybackState() {
+      if (!('mediaSession' in navigator)) return;
+      navigator.mediaSession.playbackState = audioPlayerElement.paused ? 'paused' : 'playing';
+    }
+
     // Builds the full list of playable tracks (any assigned clip that has a
     // Column O audio URL), reusing buildClipCards()'s access-resolution logic
     // so the Audio Player only ever shows clips this user is actually
@@ -3365,23 +3447,16 @@
       audioPlayerElement.src = track.audioStreamUrl;
       audioMediaTitle.textContent = track.name;
 
-      const hasVideo = !!track.hlsUrl; // Column C - shown muted/decorative only
-      audioMediaCard.classList.toggle('show-video', hasVideo);
-      audioMediaCard.classList.toggle('show-thumb', !hasVideo);
-      if (hasVideo) {
-        audioMediaVideo.src = track.hlsUrl;
-        audioMediaVideo.load();
-      } else {
-        audioMediaVideo.removeAttribute('src');
-        audioMediaThumb.src = track.thumbnailUrl || DEFAULT_THUMBNAIL_URL;
-      }
+      // Column S (Audio Thumbnail) first, falling back to Column D (the
+      // video/reference thumbnail) if that's blank for this track.
+      audioMediaThumb.src = track.audioThumbnailUrl || track.thumbnailUrl || DEFAULT_THUMBNAIL_URL;
 
       updateAudioFavoriteButton();
       renderAudioQueue();
+      updateMediaSessionMetadata(track);
 
       if (autoplay) {
         audioPlayerElement.play().catch(() => {});
-        if (hasVideo) audioMediaVideo.play().catch(() => {});
       }
     }
 
@@ -3446,8 +3521,9 @@
 
         const heartBtn = document.createElement('button');
         heartBtn.type = 'button';
-        heartBtn.className = 'audio-track-heart';
-        heartBtn.textContent = isTrackFavorited(track.id) ? '🔥' : '🤍';
+        const rowFavorited = isTrackFavorited(track.id);
+        heartBtn.className = 'audio-track-heart' + (rowFavorited ? ' is-favorited' : '');
+        heartBtn.textContent = rowFavorited ? '🔥' : '🤍';
         heartBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           toggleTrackFavorite(track.id);
@@ -3499,7 +3575,7 @@
       } else {
         audioPlayerElement.removeAttribute('src');
         audioMediaTitle.textContent = '';
-        audioMediaCard.classList.remove('show-video', 'show-thumb');
+        audioMediaThumb.removeAttribute('src');
       }
       audioProgressFill.style.width = '0%';
       audioProgressHandle.style.left = '0%';
@@ -3515,6 +3591,7 @@
       audioIsRepeatOn = false;
       audioShuffleBtn.classList.remove('active');
       audioRepeatBtn.classList.remove('active');
+      setupMediaSessionHandlersOnce();
       selectAudioPlaylist(audioPlaylistSelect.value);
       videoHubScreen.classList.remove('show');
       audioPlayerScreen.classList.add('show');
@@ -3522,7 +3599,6 @@
 
     function closeAudioPlayerScreen() {
       audioPlayerElement.pause();
-      audioMediaVideo.pause();
       audioPlayerScreen.classList.remove('show');
       videoHubScreen.classList.add('show');
     }
@@ -3536,14 +3612,12 @@
     audioPlayPauseBtn.addEventListener('click', () => {
       if (audioPlayerElement.paused) {
         audioPlayerElement.play().catch(() => {});
-        if (audioMediaCard.classList.contains('show-video')) audioMediaVideo.play().catch(() => {});
       } else {
         audioPlayerElement.pause();
-        audioMediaVideo.pause();
       }
     });
-    audioPlayerElement.addEventListener('play', updateAudioPlayPauseIcon);
-    audioPlayerElement.addEventListener('pause', updateAudioPlayPauseIcon);
+    audioPlayerElement.addEventListener('play', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); });
+    audioPlayerElement.addEventListener('pause', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); });
 
     audioPrevBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition - 1, true));
     audioNextBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition + 1, true));
@@ -3639,7 +3713,6 @@
       closeAudioTrackMenu();
       if (!clip) return;
       audioPlayerElement.pause();
-      audioMediaVideo.pause();
       audioPlayerScreen.classList.remove('show');
       selectClipAndEnterApp(clip);
     });
@@ -3867,8 +3940,6 @@
 
       audioPlayerElement.pause();
       audioPlayerElement.removeAttribute('src');
-      audioMediaVideo.pause();
-      audioMediaVideo.removeAttribute('src');
       audioPlayerScreen.classList.remove('show');
       closeAudioTrackMenu();
 
