@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (32.0 - Alpha)</title>
+  <title>Kapa Sync Video Review (32.0 Alpha2)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -1172,6 +1172,13 @@
       padding: 4px;
     }
     .audio-ctrl-btn.active { opacity: 1; filter: drop-shadow(0 0 5px rgba(255,193,7,0.85)); }
+    /* Loop/Repeat + Shuffle are toggle-style controls (as opposed to
+       prev/next, which are momentary actions with no on/off state) - dimmed
+       further than the shared .audio-ctrl-btn default so it reads clearly as
+       "off" at a glance, then restored to full opacity + the existing active
+       glow (inherited from .audio-ctrl-btn.active above) once toggled on. */
+    .audio-toggle-btn { opacity: 0.5; }
+    .audio-toggle-btn.active { opacity: 1; }
     .audio-play-btn {
       width: 66px;
       height: 66px;
@@ -1304,7 +1311,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">32.0 Build</div>
+      <div class="gate-build-tag">32.0 Alpha2 Build</div>
     </div>
   </div>
 
@@ -1355,11 +1362,11 @@
       </div>
 
       <div class="audio-controls-row">
-        <button type="button" id="audioRepeatBtn" class="audio-ctrl-btn" aria-label="Repeat playlist">🔁</button>
+        <button type="button" id="audioRepeatBtn" class="audio-ctrl-btn audio-toggle-btn" aria-label="Repeat playlist">🔁</button>
         <button type="button" id="audioPrevBtn" class="audio-ctrl-btn" aria-label="Previous track">⏮️</button>
         <button type="button" id="audioPlayPauseBtn" class="audio-play-btn" aria-label="Play/Pause">▶️</button>
         <button type="button" id="audioNextBtn" class="audio-ctrl-btn" aria-label="Next track">⏭️</button>
-        <button type="button" id="audioShuffleBtn" class="audio-ctrl-btn" aria-label="Shuffle">🔀</button>
+        <button type="button" id="audioShuffleBtn" class="audio-ctrl-btn audio-toggle-btn" aria-label="Shuffle">🔀</button>
       </div>
 
       <div class="audio-queue" id="audioQueue"></div>
@@ -1479,7 +1486,7 @@
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">32.0</div>
+      <div class="version-tag">32.0 Alpha2</div>
     </div>
   </div>
 
@@ -3288,7 +3295,12 @@
     let audioPlayOrder = [];      // indices into audioQueueTracks, in current play order (identity or shuffled)
     let audioQueuePosition = -1;  // index into audioPlayOrder
     let audioIsShuffleOn = false;
-    let audioIsRepeatOn = false;
+    // Repeat is a 3-state toggle rather than a boolean:
+    //   'off'      - no looping, playlist plays through once and stops
+    //   'playlist' - the whole active playlist/queue repeats continuously
+    //   'track'    - the current single track repeats indefinitely
+    // Cycled in that order by each tap of the repeat button.
+    let audioRepeatMode = 'off';
     let audioFavoriteTrackIds = loadAudioFavorites();
     let audioTrackMenuTargetClip = null;
 
@@ -3367,19 +3379,33 @@
         catch (e) { /* action not supported by this browser - ignore */ }
       };
 
-      safeSetHandler('play', () => { audioPlayerElement.play().catch(() => {}); });
-      safeSetHandler('pause', () => { audioPlayerElement.pause(); });
+      safeSetHandler('play', () => {
+        audioPlayerElement.play().then(() => {
+          // Explicitly reassert 'playing' the instant a lock-screen/notification
+          // play tap resumes audio - some Android WebView builds are slow to
+          // reflect this from the element's own 'play' event alone once the
+          // page is already backgrounded, which is exactly when the OS UI
+          // most needs an immediate, correct state.
+          navigator.mediaSession.playbackState = 'playing';
+        }).catch(() => {});
+      });
+      safeSetHandler('pause', () => {
+        audioPlayerElement.pause();
+        navigator.mediaSession.playbackState = 'paused';
+      });
       safeSetHandler('previoustrack', () => playAudioAtOrderPosition(audioQueuePosition - 1, true));
       safeSetHandler('nexttrack', () => playAudioAtOrderPosition(audioQueuePosition + 1, true));
       safeSetHandler('seekto', (details) => {
         if (details && details.seekTime != null && isFinite(audioPlayerElement.duration)) {
           audioPlayerElement.currentTime = details.seekTime;
           updateAudioProgressUi();
+          updateMediaSessionPositionState();
         }
       });
       safeSetHandler('seekbackward', (details) => {
         const skip = (details && details.seekOffset) || 10;
         audioPlayerElement.currentTime = Math.max(0, audioPlayerElement.currentTime - skip);
+        updateMediaSessionPositionState();
       });
       safeSetHandler('seekforward', (details) => {
         const skip = (details && details.seekOffset) || 10;
@@ -3387,12 +3413,33 @@
         audioPlayerElement.currentTime = isFinite(duration)
           ? Math.min(duration, audioPlayerElement.currentTime + skip)
           : audioPlayerElement.currentTime + skip;
+        updateMediaSessionPositionState();
       });
     }
 
     function updateMediaSessionPlaybackState() {
       if (!('mediaSession' in navigator)) return;
       navigator.mediaSession.playbackState = audioPlayerElement.paused ? 'paused' : 'playing';
+    }
+
+    // Keeps the OS lock-screen/notification scrubber (position + duration)
+    // in sync, and is also what makes the lock screen's own drag-to-seek
+    // gesture work at all on Android - without a position state, some
+    // platforms grey out or ignore scrubbing entirely. Called on every
+    // loadedmetadata (new track/duration known) and on a light throttle from
+    // timeupdate so the lock-screen scrubber keeps advancing during playback,
+    // including while the page itself is hidden/backgrounded.
+    function updateMediaSessionPositionState() {
+      if (!('mediaSession' in navigator) || typeof navigator.mediaSession.setPositionState !== 'function') return;
+      const duration = audioPlayerElement.duration;
+      if (!duration || !isFinite(duration) || duration <= 0) return;
+      try {
+        navigator.mediaSession.setPositionState({
+          duration,
+          playbackRate: audioPlayerElement.playbackRate || 1,
+          position: Math.min(audioPlayerElement.currentTime, duration)
+        });
+      } catch (e) { /* transient - e.g. position momentarily > duration during a seek */ }
     }
 
     // Builds the full list of playable tracks (any assigned clip that has a
@@ -3456,7 +3503,9 @@
       updateMediaSessionMetadata(track);
 
       if (autoplay) {
-        audioPlayerElement.play().catch(() => {});
+        audioPlayerElement.play().then(() => {
+          navigator.mediaSession && (navigator.mediaSession.playbackState = 'playing');
+        }).catch(() => {});
       }
     }
 
@@ -3553,10 +3602,16 @@
       loadAudioTrackIntoPlayer(audioQueueTracks[queueIndex], true);
     }
 
+    // Advances to a given position in the play order. Wrapping (looping back
+    // to the start/end instead of stopping) applies whenever either repeat
+    // mode is active - 'playlist' loops the whole queue, and 'track' also
+    // wraps here for manual prev/next navigation (its actual "replay the
+    // same track" behavior on natural end-of-track is handled separately in
+    // the audioPlayerElement 'ended' listener below).
     function playAudioAtOrderPosition(orderPos, autoplay) {
       const count = audioPlayOrder.length;
       if (count === 0) return;
-      if (audioIsRepeatOn) {
+      if (audioRepeatMode === 'playlist' || audioRepeatMode === 'track') {
         orderPos = ((orderPos % count) + count) % count; // wrap both directions
       } else {
         if (orderPos < 0 || orderPos >= count) return; // stop at either edge when not repeating
@@ -3588,9 +3643,9 @@
       audioAllTracks = buildAudioAllTracks();
       populateAudioPlaylistSelect();
       audioIsShuffleOn = false;
-      audioIsRepeatOn = false;
+      audioRepeatMode = 'off';
       audioShuffleBtn.classList.remove('active');
-      audioRepeatBtn.classList.remove('active');
+      updateRepeatButtonUi();
       setupMediaSessionHandlersOnce();
       selectAudioPlaylist(audioPlaylistSelect.value);
       videoHubScreen.classList.remove('show');
@@ -3611,21 +3666,42 @@
 
     audioPlayPauseBtn.addEventListener('click', () => {
       if (audioPlayerElement.paused) {
-        audioPlayerElement.play().catch(() => {});
+        // .play() is called directly inside this click handler (a genuine
+        // user gesture, still synchronous with the tap) rather than after
+        // any await - this is what lets the browser flip Media Session to
+        // 'playing' and register audio focus while the page is still in the
+        // foreground, which is the actual prerequisite for Android letting
+        // playback continue once the screen locks/minimizes afterward.
+        audioPlayerElement.play().then(() => {
+          navigator.mediaSession && (navigator.mediaSession.playbackState = 'playing');
+        }).catch(() => {});
       } else {
         audioPlayerElement.pause();
+        navigator.mediaSession && (navigator.mediaSession.playbackState = 'paused');
       }
     });
-    audioPlayerElement.addEventListener('play', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); });
+    audioPlayerElement.addEventListener('play', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); updateMediaSessionPositionState(); });
     audioPlayerElement.addEventListener('pause', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); });
 
     audioPrevBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition - 1, true));
     audioNextBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition + 1, true));
 
+    // --- Repeat: 3-state cycle (off -> playlist -> track -> off) ---
+    function updateRepeatButtonUi() {
+      audioRepeatBtn.classList.toggle('active', audioRepeatMode !== 'off');
+      // 🔂 ("repeat single track") already visually reads as a repeat icon
+      // with a "1" on it, so switching the glyph itself covers the "small 1
+      // badge" requirement without any extra overlay markup/CSS.
+      audioRepeatBtn.textContent = audioRepeatMode === 'track' ? '🔂' : '🔁';
+      audioRepeatBtn.setAttribute('aria-label',
+        audioRepeatMode === 'track' ? 'Repeat: single track' :
+        audioRepeatMode === 'playlist' ? 'Repeat: playlist' : 'Repeat: off');
+    }
     audioRepeatBtn.addEventListener('click', () => {
-      audioIsRepeatOn = !audioIsRepeatOn;
-      audioRepeatBtn.classList.toggle('active', audioIsRepeatOn);
+      audioRepeatMode = audioRepeatMode === 'off' ? 'playlist' : audioRepeatMode === 'playlist' ? 'track' : 'off';
+      updateRepeatButtonUi();
     });
+
     audioShuffleBtn.addEventListener('click', () => {
       audioIsShuffleOn = !audioIsShuffleOn;
       audioShuffleBtn.classList.toggle('active', audioIsShuffleOn);
@@ -3634,9 +3710,19 @@
       audioQueuePosition = activeTrack ? audioPlayOrder.indexOf(audioQueueTracks.indexOf(activeTrack)) : -1;
     });
 
-    // Auto-advance to the next track (or loop the whole playlist if Repeat
-    // is on) once the current one finishes.
+    // Auto-advance once the current track finishes. Single-track repeat
+    // ('track') replays the exact same track in place rather than advancing
+    // through the queue; playlist repeat/off fall through to the normal
+    // next-track advance (which itself wraps only when repeat is active -
+    // see playAudioAtOrderPosition above).
     audioPlayerElement.addEventListener('ended', () => {
+      if (audioRepeatMode === 'track') {
+        audioPlayerElement.currentTime = 0;
+        audioPlayerElement.play().then(() => {
+          navigator.mediaSession && (navigator.mediaSession.playbackState = 'playing');
+        }).catch(() => {});
+        return;
+      }
       playAudioAtOrderPosition(audioQueuePosition + 1, true);
     });
 
@@ -3650,6 +3736,39 @@
       audioMuteBtn.textContent = audioPlayerElement.muted ? '🔇' : '🔊';
     });
 
+    // --- Android/mobile background playback reliability ---
+    // A plain <audio> element (unlike the camera review screen's playback,
+    // which is deliberately routed through a Web Audio API graph for its
+    // isolated-audio-track trick) is used here specifically because it is
+    // the browser's own native, best-supported path for continued
+    // background/lock-screen playback - there's no AudioContext for this
+    // player that could get suspended when the tab is hidden, so there's
+    // nothing here to "keep alive" in that sense. What actually keeps
+    // playback going after the screen locks/the app is minimized is the
+    // browser correctly registering audio focus + a 'playing' Media Session
+    // state while still in the foreground (handled above, at the moment
+    // .play() is called from a real user gesture) - the listener below just
+    // reasserts that state and the lock-screen metadata/position right as
+    // the page goes into the background, since some Android WebView/Chrome
+    // builds are unreliable about picking up Media Session updates made
+    // *after* the page is already hidden.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (!audioPlayerElement.paused) {
+          const track = currentAudioTrack();
+          if (track) updateMediaSessionMetadata(track);
+          updateMediaSessionPlaybackState();
+          updateMediaSessionPositionState();
+        }
+      } else {
+        // Returning to the foreground - some browsers throttle/coalesce
+        // timeupdate while hidden, so resync the visible UI immediately
+        // rather than waiting for the next tick.
+        updateAudioProgressUi();
+        updateAudioPlayPauseIcon();
+      }
+    });
+
     // --- Progress bar: click/drag to seek ---
     let audioProgressDragging = false;
     function seekAudioToClientX(clientX) {
@@ -3660,6 +3779,7 @@
       const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       audioPlayerElement.currentTime = fraction * duration;
       updateAudioProgressUi();
+      updateMediaSessionPositionState();
     }
     function updateAudioProgressUi() {
       const duration = audioPlayerElement.duration;
@@ -3672,7 +3792,7 @@
       audioDurationEl.textContent = formatAudioTime(duration);
     }
     audioPlayerElement.addEventListener('timeupdate', () => { if (!audioProgressDragging) updateAudioProgressUi(); });
-    audioPlayerElement.addEventListener('loadedmetadata', updateAudioProgressUi);
+    audioPlayerElement.addEventListener('loadedmetadata', () => { updateAudioProgressUi(); updateMediaSessionPositionState(); });
 
     audioProgressTrack.addEventListener('pointerdown', (e) => {
       audioProgressDragging = true;
