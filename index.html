@@ -3299,7 +3299,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       audioPlayerCard.innerHTML =
         '<div class="hub-card-audio-icon">🎧</div>' +
         '<div class="hub-card-name">Audio Player</div>' +
-        '<div class="hub-card-badge hub-card-badge-audio">Playlists</div>';
+        '<div class="hub-card-badge hub-card-badge-audio">Ngā Kete</div>';
       audioPlayerCard.addEventListener('click', openAudioPlayerScreen);
       hubGrid.appendChild(audioPlayerCard);
 
@@ -3333,7 +3333,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
         } else if (clip.isLoopOnly) {
           const badge = document.createElement('div');
           badge.className = 'hub-card-badge hub-card-badge-loop';
-          badge.textContent = 'Loop Practice';
+          badge.textContent = 'KUPU KIRIATA';
           card.appendChild(badge);
         }
 
@@ -3584,7 +3584,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
     }
 
     function tracksForPlaylist(playlistName) {
-      if (!playlistName || playlistName === 'All Tracks') return audioAllTracks.slice();
+      if (!playlistName || playlistName === 'Waiata Katoa') return audioAllTracks.slice();
       return audioAllTracks.filter((t) => (t.playlistTags || []).includes(playlistName));
     }
 
