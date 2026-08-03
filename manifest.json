@@ -1,21 +1,24 @@
 {
-  "short_name": "MyHTMLApp",
-  "name": "My GitHub HTML Web Application",
+  "name": "Tahuna Te Ahi 🔥",
+  "short_name": "TTA 🔥",
+  "display": "standalone",
+  "start_url": "./index.html",
+  "scope": "./",
+  "theme_color": "#121212",
+  "background_color": "#121212",
+  "orientation": "any",
   "icons": [
     {
-      "src": "icon-192.png",
+      "src": "https://lh3.googleusercontent.com/d/1AqznoAehd3AKtX2u_4eWHdXBFogwtKu3",
+      "sizes": "192x192",
       "type": "image/png",
-      "sizes": "192x192"
+      "purpose": "any"
     },
     {
-      "src": "icon-512.png",
+      "src": "https://lh3.googleusercontent.com/d/1RwWi9ecbLeT3bLpNTst8-9Gp55fhGby3",
+      "sizes": "512x512",
       "type": "image/png",
-      "sizes": "512x512"
+      "purpose": "any"
     }
-  ],
-  "start_url": "./index.html",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
-  "display": "standalone",
-  "orientation": "portrait"
+  ]
 }
