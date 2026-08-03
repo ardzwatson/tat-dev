@@ -606,6 +606,23 @@
       }
     }
 
+    /* Mobile portrait layout adjustment for player controls */
+    @media screen and (max-width: 768px) and (orientation: portrait) {
+      .ref-audio-track-bar {
+        top: 12px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        flex-direction: column !important;
+        align-items: flex-end !important;
+        gap: 8px !important;
+      }
+      .ref-speed-select {
+        position: static !important;
+        display: block !important;
+        margin-top: 8px !important;
+      }
+    }
+
     .box { position: relative; width: 100%; flex: 1 1 0%; height: 0; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
     .viewfinder-container { width: 100%; height: 100%; position: relative; overflow: hidden; background: #000; }
     
@@ -1097,6 +1114,12 @@
       object-fit: cover;
       display: block;
     }
+    .audio-media-card video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
     .audio-media-title {
       margin-top: 14px;
       text-align: center;
@@ -1398,7 +1421,6 @@ Ki a Te Moremore-o-te-rangi e!</p>
     <div class="audio-scroll-area">
       <div class="audio-media-wrap">
         <div class="audio-media-card" id="audioMediaCard">
-          <img id="audioMediaThumb" alt="" crossorigin="anonymous" referrerpolicy="no-referrer">
         </div>
         <div class="audio-media-title" id="audioMediaTitle"></div>
       </div>
@@ -1737,7 +1759,6 @@ Ki a Te Moremore-o-te-rangi e!</p>
     const audioPlaylistSelect = document.getElementById('audioPlaylistSelect');
     const audioPlayerBackBtn = document.getElementById('audioPlayerBackBtn');
     const audioMediaCard = document.getElementById('audioMediaCard');
-    const audioMediaThumb = document.getElementById('audioMediaThumb');
     const audioMediaTitle = document.getElementById('audioMediaTitle');
     const audioFavoriteBtn = document.getElementById('audioFavoriteBtn');
     const audioMuteBtn = document.getElementById('audioMuteBtn');
@@ -3544,6 +3565,62 @@ Ki a Te Moremore-o-te-rangi e!</p>
       if (audioPlayerScreen.classList.contains('show')) applyStaticControlIcons();
     });
 
+    function isVideoUrl(url) {
+      if (!url) return false;
+      const lowerUrl = url.toLowerCase();
+      // Check for Bunny.net video indicators
+      if (lowerUrl.includes('bunnycdn') || lowerUrl.includes('bunny.net')) {
+        // Additional check - if it contains video-specific patterns, it's likely a video
+        if (lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('v.bunnycdn')) {
+          return true;
+        }
+      }
+      // Check for direct video file extensions
+      if (lowerUrl.endsWith('.mp4') || lowerUrl.endsWith('.webm') || lowerUrl.endsWith('.mov')) {
+        return true;
+      }
+      return false;
+    }
+
+    function renderAudioMediaCard(url, fallbackUrl) {
+      const mediaCard = document.getElementById('audioMediaCard');
+      if (!mediaCard) return;
+      
+      mediaCard.innerHTML = '';
+      
+      if (!url) {
+        // Fall back to the fallback URL (usually the video thumbnail)
+        if (fallbackUrl) {
+          const img = document.createElement('img');
+          img.alt = '';
+          img.crossOrigin = 'anonymous';
+          img.referrerPolicy = 'no-referrer';
+          img.src = fallbackUrl;
+          mediaCard.appendChild(img);
+        }
+        return;
+      }
+
+      if (isVideoUrl(url)) {
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.crossOrigin = 'anonymous';
+        video.referrerPolicy = 'no-referrer';
+        video.src = url;
+        mediaCard.appendChild(video);
+      } else {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.crossOrigin = 'anonymous';
+        img.referrerPolicy = 'no-referrer';
+        img.src = url;
+        mediaCard.appendChild(img);
+      }
+    }
+
     function formatAudioTime(seconds) {
       if (!isFinite(seconds) || seconds < 0) seconds = 0;
       const mins = Math.floor(seconds / 60);
@@ -3750,7 +3827,10 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
       // Column S (Audio Thumbnail) first, falling back to Column D (the
       // video/reference thumbnail) if that's blank for this track.
-      audioMediaThumb.src = track.audioThumbnailUrl || track.thumbnailUrl || DEFAULT_THUMBNAIL_URL;
+      // The renderAudioMediaCard function detects video URLs and renders appropriately.
+      const audioThumbUrl = track.audioThumbnailUrl || '';
+      const fallbackUrl = track.thumbnailUrl || DEFAULT_THUMBNAIL_URL;
+      renderAudioMediaCard(audioThumbUrl, fallbackUrl);
 
       updateAudioFavoriteButton();
       updateMediaSessionMetadata(track);
@@ -3903,7 +3983,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       } else {
         audioPlayerElement.removeAttribute('src');
         audioMediaTitle.textContent = '';
-        audioMediaThumb.removeAttribute('src');
+        audioMediaCard.innerHTML = '';
       }
       audioProgressFill.style.width = '0%';
       audioProgressHandle.style.left = '0%';
