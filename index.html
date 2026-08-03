@@ -1348,7 +1348,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
   <!-- AUDIO PLAYER SCREEN -->
   <div id="audioPlayerScreen">
     <div class="audio-header">
-      <div class="audio-header-tag">Playlist</div>
+      <div class="audio-header-tag">Ngā Kete</div>
       <select id="audioPlaylistSelect" class="audio-playlist-select" aria-label="Select playlist"></select>
       <button type="button" id="audioPlayerBackBtn" class="audio-back-btn" aria-label="Back">✕</button>
     </div>
@@ -3298,8 +3298,8 @@ Ki a Te Moremore-o-te-rangi e!</p>
       audioPlayerCard.className = 'hub-card hub-card-audio-player';
       audioPlayerCard.innerHTML =
         '<div class="hub-card-audio-icon">🎧</div>' +
-        '<div class="hub-card-name">Audio Player</div>' +
-        '<div class="hub-card-badge hub-card-badge-audio">Ngā Kete</div>';
+        '<div class="hub-card-name">HIKA RA!</div>' +
+        '<div class="hub-card-badge hub-card-badge-audio">AUDIO PLAYER</div>';
       audioPlayerCard.addEventListener('click', openAudioPlayerScreen);
       hubGrid.appendChild(audioPlayerCard);
 
@@ -3576,7 +3576,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
     function populateAudioPlaylistSelect() {
       const names = getUniquePlaylistNames(audioAllTracks);
-      const options = ['All Tracks', ...names];
+      const options = ['Waiata Katoa', ...names];
       audioPlaylistSelect.innerHTML = options
         .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
         .join('');
