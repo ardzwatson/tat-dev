@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Kapa Sync Video Review (32.0 Alpha2)</title>
+  <title>Kapa Sync Video Review (32.0)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap" rel="stylesheet">
@@ -1179,6 +1179,12 @@
        glow (inherited from .audio-ctrl-btn.active above) once toggled on. */
     .audio-toggle-btn { opacity: 0.5; }
     .audio-toggle-btn.active { opacity: 1; }
+    /* Custom system icons (Play/Pause/Prev/Next/Loop/Shuffle) fetched from the
+       "System" sheet tab - swapped in for the default emoji when a PNG URL is
+       available for that control; sized to sit comfortably inside each
+       button without disturbing the existing layout/spacing. */
+    .audio-icon-img { width: 22px; height: 22px; object-fit: contain; display: block; pointer-events: none; }
+    .audio-play-btn .audio-icon-img { width: 30px; height: 30px; }
     .audio-play-btn {
       width: 66px;
       height: 66px;
@@ -1311,7 +1317,7 @@
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="Access Key" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">32.0 Alpha2 Build</div>
+      <div class="gate-build-tag">32.0 Build</div>
     </div>
   </div>
 
@@ -1486,7 +1492,7 @@
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">32.0 Alpha2</div>
+      <div class="version-tag">32.0</div>
     </div>
   </div>
 
@@ -1505,6 +1511,12 @@
     const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1fxQrloklFsVMvy1-hf5kouhH1w0N_gaPy26uA5jT7S8/gviz/tq?tqx=out:csv";
     // "Video Library" tab - the shared catalog of practice clips users can pick from.
     const VIDEO_LIBRARY_CSV_URL = "https://docs.google.com/spreadsheets/d/1fxQrloklFsVMvy1-hf5kouhH1w0N_gaPy26uA5jT7S8/gviz/tq?tqx=out:csv&gid=1223354905";
+    // "System" tab - custom PNG icon URLs for the Audio Player's transport
+    // controls (Play/Pause/Prev/Next/Loop All/Loop One/Shuffle). Fetched by
+    // sheet NAME (via the gviz "sheet=" param) rather than by gid, since a
+    // gid isn't a stable/known identifier for a newly added tab the way it
+    // is for tabs already wired up elsewhere in this file.
+    const SYSTEM_ICONS_CSV_URL = "https://docs.google.com/spreadsheets/d/1fxQrloklFsVMvy1-hf5kouhH1w0N_gaPy26uA5jT7S8/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent('System');
     // Keyed by lowercased Clip ID -> { name, hlsUrl, thumbnailUrl, thumbnailTime }
     let clipLibrary = {};
     // Fallback video shown if a user's sheet row leaves the HLS/Thumbnail columns blank.
@@ -2461,11 +2473,70 @@
       }
     }
 
+    // --- Audio Player custom system icons (Column A/B of the "System" tab) ---
+    // Keyed to the internal names used throughout the Audio Player JS below.
+    // null until (unless) a matching PNG URL is found - every consumer of
+    // this object falls back to the original emoji when a key is still null,
+    // so a missing/empty System tab degrades gracefully instead of breaking
+    // the controls.
+    let systemIcons = { play: null, pause: null, prev: null, next: null, loopAll: null, loopOne: null, shuffle: null };
+
+    // Matches Column A's Button Name text (case-insensitive) to one of the
+    // internal icon keys above. Covers the exact labels named in the sheet
+    // spec plus a couple of obvious variants, so small differences in how
+    // someone phrases a row's label don't silently drop that icon.
+    const SYSTEM_ICON_NAME_KEYS = {
+      'play': 'play',
+      'pause': 'pause',
+      'previous track': 'prev', 'previous': 'prev', 'prev': 'prev',
+      'next track': 'next', 'next': 'next',
+      'loop all': 'loopAll', 'loop playlist': 'loopAll', 'loop all (playlist)': 'loopAll',
+      'loop one': 'loopOne', 'loop single': 'loopOne', 'loop track': 'loopOne', 'loop single track': 'loopOne',
+      'shuffle': 'shuffle'
+    };
+    // Fallback if a row's Button Name (Column A) is blank or doesn't match
+    // any label above - falls back to the exact sequential row order given
+    // in the spec (Row 2 = Play ... Row 8 = Shuffle) so a purely positional
+    // sheet (no names typed at all) still maps correctly.
+    const SYSTEM_ICON_POSITIONAL_ORDER = ['play', 'pause', 'prev', 'next', 'loopAll', 'loopOne', 'shuffle'];
+
+    async function fetchSystemIcons() {
+      try {
+        const response = await fetch(SYSTEM_ICONS_CSV_URL);
+        if (!response.ok) throw new Error("System icon sync failed");
+        const csvText = await response.text();
+        const rows = parseCsvFull(csvText);
+
+        // Row 1 is always the header row - never treated as data.
+        rows.slice(1).forEach((columns, index) => {
+          if (columns.every(v => v === '')) return; // blank row
+          const rawName = (columns[0] || '').trim().toLowerCase();
+          const rawUrl = (columns[1] || '').trim();
+          // Icon URLs go through the same Drive-link normalization + https-only
+          // sanitization as every other externally-sourced image in this app.
+          const url = sanitizeExternalUrl(formatGoogleDriveImageUrl(rawUrl));
+          if (!url) return;
+
+          const key = SYSTEM_ICON_NAME_KEYS[rawName] || SYSTEM_ICON_POSITIONAL_ORDER[index];
+          if (key) systemIcons[key] = url;
+        });
+
+        const loadedKeys = Object.keys(systemIcons).filter((k) => systemIcons[k]);
+        console.info(`[System Icons] Loaded ${loadedKeys.length}/7 custom control icon(s) - [${loadedKeys.join(', ')}]`);
+      } catch (err) {
+        console.warn('System icon fetch failed - Audio Player controls will use their default emoji instead:', err);
+      }
+    }
+
     // unlockPortal awaits these before building the hub, so a fast login can
     // never race ahead of the Video Library sheet still loading - that race was
     // the cause of assigned clips silently going missing for some users.
     const accessDatabaseReady = fetchAccessDatabase();
     const videoLibraryReady = fetchVideoLibrary();
+    // Not awaited by unlockPortal (icons are cosmetic, not access-gating) -
+    // applyStaticControlIcons() re-runs once this resolves so an already-open
+    // Audio Player screen picks up the custom icons as soon as they arrive.
+    const systemIconsReady = fetchSystemIcons();
 
     // Sets up (or re-points) the HLS player against whatever activeHlsUrl currently
     // is. Destroys any prior instance first, since this now runs every time the
@@ -3300,7 +3371,7 @@
     //   'playlist' - the whole active playlist/queue repeats continuously
     //   'track'    - the current single track repeats indefinitely
     // Cycled in that order by each tap of the repeat button.
-    let audioRepeatMode = 'off';
+    let audioRepeatMode = 'playlist'; // openAudioPlayerScreen() resets this to 'playlist' on every open regardless - see requirement 2
     let audioFavoriteTrackIds = loadAudioFavorites();
     let audioTrackMenuTargetClip = null;
 
@@ -3333,6 +3404,43 @@
       renderAudioQueue();
       updateAudioFavoriteButton();
     }
+
+    // Renders either a custom PNG icon (if a URL is available for this
+    // control) or the original emoji fallback (if not) into a button. Reuses
+    // an existing <img> in place rather than rebuilding it every call, so
+    // this is safe to call on every play/pause toggle or repeat-mode change
+    // without any flicker.
+    function setBtnIcon(btnEl, url, fallbackEmoji, altText) {
+      if (url) {
+        let img = btnEl.querySelector('img.audio-icon-img');
+        if (!img) {
+          btnEl.textContent = '';
+          img = document.createElement('img');
+          img.className = 'audio-icon-img';
+          btnEl.appendChild(img);
+        }
+        img.alt = altText || '';
+        if (img.src !== url) img.src = url;
+      } else {
+        btnEl.textContent = fallbackEmoji;
+      }
+    }
+
+    // Applies the custom Prev/Next/Shuffle icons (static - they don't change
+    // based on playback state) and refreshes the state-dependent Play/Pause
+    // and Loop icons. Called once when the Audio Player screen opens, and
+    // again if the System tab finishes loading after the screen is already
+    // open, so custom icons appear as soon as they're available either way.
+    function applyStaticControlIcons() {
+      setBtnIcon(audioPrevBtn, systemIcons.prev, '⏮️', 'Previous track');
+      setBtnIcon(audioNextBtn, systemIcons.next, '⏭️', 'Next track');
+      setBtnIcon(audioShuffleBtn, systemIcons.shuffle, '🔀', 'Shuffle');
+      updateAudioPlayPauseIcon();
+      updateRepeatButtonUi();
+    }
+    systemIconsReady.then(() => {
+      if (audioPlayerScreen.classList.contains('show')) applyStaticControlIcons();
+    });
 
     function formatAudioTime(seconds) {
       if (!isFinite(seconds) || seconds < 0) seconds = 0;
@@ -3517,7 +3625,11 @@
     }
 
     function updateAudioPlayPauseIcon() {
-      audioPlayPauseBtn.textContent = audioPlayerElement.paused ? '▶️' : '⏸️';
+      if (audioPlayerElement.paused) {
+        setBtnIcon(audioPlayPauseBtn, systemIcons.play, '▶️', 'Play');
+      } else {
+        setBtnIcon(audioPlayPauseBtn, systemIcons.pause, '⏸️', 'Pause');
+      }
     }
 
     function renderAudioQueue() {
@@ -3643,9 +3755,10 @@
       audioAllTracks = buildAudioAllTracks();
       populateAudioPlaylistSelect();
       audioIsShuffleOn = false;
-      audioRepeatMode = 'off';
+      // Loop Playlist is on by default every time the Audio Player is opened.
+      audioRepeatMode = 'playlist';
       audioShuffleBtn.classList.remove('active');
-      updateRepeatButtonUi();
+      applyStaticControlIcons(); // sets Prev/Next/Shuffle + refreshes Play/Pause + Loop icons
       setupMediaSessionHandlersOnce();
       selectAudioPlaylist(audioPlaylistSelect.value);
       videoHubScreen.classList.remove('show');
@@ -3686,19 +3799,24 @@
     audioPrevBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition - 1, true));
     audioNextBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition + 1, true));
 
-    // --- Repeat: 3-state cycle (off -> playlist -> track -> off) ---
+    // --- Repeat: 3-state cycle (playlist -> track -> off -> playlist) ---
+    // State 1 (default): Loop Playlist - "Loop All" icon, full opacity.
+    // State 2 (one click): Loop Single Track - "Loop One" icon, full opacity.
+    // State 3 (click again): Disabled - "Loop All" icon, 50% opacity.
     function updateRepeatButtonUi() {
       audioRepeatBtn.classList.toggle('active', audioRepeatMode !== 'off');
-      // 🔂 ("repeat single track") already visually reads as a repeat icon
-      // with a "1" on it, so switching the glyph itself covers the "small 1
-      // badge" requirement without any extra overlay markup/CSS.
-      audioRepeatBtn.textContent = audioRepeatMode === 'track' ? '🔂' : '🔁';
-      audioRepeatBtn.setAttribute('aria-label',
-        audioRepeatMode === 'track' ? 'Repeat: single track' :
-        audioRepeatMode === 'playlist' ? 'Repeat: playlist' : 'Repeat: off');
+      if (audioRepeatMode === 'track') {
+        setBtnIcon(audioRepeatBtn, systemIcons.loopOne, '🔂', 'Repeat: single track');
+      } else {
+        // Both 'playlist' and 'off' show the Loop All icon - the .active
+        // class (toggled above) is what distinguishes them visually via the
+        // 50%/100% opacity rule.
+        setBtnIcon(audioRepeatBtn, systemIcons.loopAll, '🔁',
+          audioRepeatMode === 'playlist' ? 'Repeat: playlist' : 'Repeat: off');
+      }
     }
     audioRepeatBtn.addEventListener('click', () => {
-      audioRepeatMode = audioRepeatMode === 'off' ? 'playlist' : audioRepeatMode === 'playlist' ? 'track' : 'off';
+      audioRepeatMode = audioRepeatMode === 'playlist' ? 'track' : audioRepeatMode === 'track' ? 'off' : 'playlist';
       updateRepeatButtonUi();
     });
 
