@@ -1327,6 +1327,25 @@
       text-align: left;
     }
     .audio-track-menu-item:hover { background: rgba(255,255,255,0.08); }
+
+
+    /* --- PWA INSTALL MODAL STYLES --- */
+    .pwa-modal-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(24,24,28,0.6); backdrop-filter: blur(6px); z-index: 10000; }
+    #pwaInstallModal { display: none; }
+    .pwa-modal-card { background: #18181c; color: #fff; border-radius: 12px; width: min(720px, 94%); max-width: 720px; padding: 18px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); border: 1px solid rgba(255,123,0,0.08); }
+    .pwa-modal-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .pwa-modal-title { font-size: 18px; font-weight: 700; }
+    .pwa-modal-close { background: transparent; border: none; color: #fff; font-size: 22px; cursor: pointer; }
+    .pwa-tab-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+    .pwa-tab-btn { background: transparent; border: 1px solid rgba(255,255,255,0.06); padding: 8px 12px; border-radius: 8px; color: #fff; cursor: pointer; }
+    .pwa-tab-btn.active { background: linear-gradient(90deg,#ff7b00,#ff9e43); color: #111; border: none; box-shadow: 0 6px 18px rgba(255,123,0,0.12); }
+    .pwa-tab-content { display: none; }
+    .pwa-tab-content.active { display: block; }
+    .pwa-ui-box { background: #0f0f12; border: 1px solid rgba(255,123,0,0.08); padding: 10px 12px; border-radius: 8px; font-family: monospace; color: #fff; margin: 8px 0; }
+    .pwa-note { color: #ffd8b8; font-size: 13px; margin-bottom: 8px; }
+    .pwa-footer { display: flex; justify-content: flex-end; margin-top: 14px; }
+    .pwa-action-btn { background: linear-gradient(90deg,#ff7b00,#ff8f3a); color: #111; border: none; padding: 10px 14px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+
   </style>
 </head>
 <body>
@@ -1522,6 +1541,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
+      <button id="pwaInstallTriggerBtn" class="custom-png-btn" onclick="openInstallModal()">📲 How to Install App</button>
       <div class="version-tag">32.0</div>
     </div>
   </div>
@@ -5358,6 +5378,116 @@ Ki a Te Moremore-o-te-rangi e!</p>
       }
     });
   </script>
+
+  <!-- PWA Install Modal HTML & JS -->
+  <div id="pwaInstallModal" class="pwa-modal-overlay" style="display: none;">
+    <div class="pwa-modal-card">
+      <div class="pwa-modal-header">
+        <div class="pwa-modal-title">Install Te Ahi K   a 🔥</div>
+        <button class="pwa-modal-close" onclick="closeInstallModal()">×</button>
+      </div>
+      <div class="pwa-tab-bar">
+        <button id="tabBtnAndroid" class="pwa-tab-btn" onclick="switchInstallTab('android')">🤖 Android</button>
+        <button id="tabBtnIOS" class="pwa-tab-btn" onclick="switchInstallTab('ios')">🍎 iOS (iPhone/iPad)</button>
+      </div>
+
+      <div id="installTabAndroid" class="pwa-tab-content">
+        <div class="pwa-note">On Android (Chrome/Edge), use the browser's menu to install.</div>
+        <div class="pwa-ui-box">1. Tap the browser menu (⋮) in Chrome.<br>2. Choose "Install app" or "Add to home screen".</div>
+      </div>
+
+      <div id="installTabIOS" class="pwa-tab-content">
+        <div class="pwa-note">On iOS Safari, use the Share button then "Add to Home Screen".</div>
+        <div class="pwa-ui-box">1. Tap the Share button (⎋) in Safari.<br>2. Scroll and choose "Add to Home Screen".</div>
+      </div>
+
+      <div class="pwa-footer">
+      <button class="pwa-action-btn" onclick="triggerDirectInstall()">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Capture Chrome's beforeinstallprompt so we can trigger native prompt from our UI
+    let deferredPrompt = null;
+
+    window.addEventListener('beforeinstallprompt', function(e) {
+      try {
+        e.preventDefault(); // stop automatic prompt
+        deferredPrompt = e; // stash for later
+        openInstallModal(); // show our modal so user sees the install CTA
+      } catch (err) { console.warn('beforeinstallprompt handler error', err); }
+    });
+
+    function detectPlatform() {
+      const ua = navigator.userAgent || '';
+      const isIOS = /iP(hone|od|ad)/.test(ua) || (navigator.platform && /MacIntel/.test(navigator.platform) && navigator.maxTouchPoints > 1);
+      if (isIOS) return 'ios';
+      if (/Android/.test(ua)) return 'android';
+      return 'android';
+    }
+
+    function switchInstallTab(platform) {
+      const androidTab = document.getElementById('installTabAndroid');
+      const iosTab = document.getElementById('installTabIOS');
+      const tabBtnAndroid = document.getElementById('tabBtnAndroid');
+      const tabBtnIOS = document.getElementById('tabBtnIOS');
+      if (!androidTab || !iosTab || !tabBtnAndroid || !tabBtnIOS) return;
+      if (platform === 'ios') {
+        iosTab.classList.add('active'); androidTab.classList.remove('active');
+        tabBtnIOS.classList.add('active'); tabBtnAndroid.classList.remove('active');
+      } else {
+        androidTab.classList.add('active'); iosTab.classList.remove('active');
+        tabBtnAndroid.classList.add('active'); tabBtnIOS.classList.remove('active');
+      }
+    }
+
+    function openInstallModal() {
+      // Prefer Android tab when we have a deferredPrompt available
+      const platform = deferredPrompt ? 'android' : detectPlatform();
+      switchInstallTab(platform);
+      const modal = document.getElementById('pwaInstallModal');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function triggerDirectInstall() {
+      if (deferredPrompt) {
+        // Trigger Chrome's native install prompt
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice
+          .then(function(choiceResult) {
+            console.log('PWA install choice:', choiceResult);
+            deferredPrompt = null;
+          })
+          .catch(function(err) {
+            console.warn('deferredPrompt.userChoice error', err);
+            deferredPrompt = null;
+          });
+        // close our modal once the native prompt is shown
+        closeInstallModal();
+      } else {
+        // Fallback: show modal instructions (useful for iOS or when prompt isn't available)
+        openInstallModal();
+      }
+    }
+
+    function closeInstallModal() {
+      const modal = document.getElementById('pwaInstallModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const mode = params.get('mode');
+        const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone;
+        if (mode === 'install' && !isStandalone) {
+          openInstallModal();
+        }
+      } catch (e) { /* ignore */ }
+    });
+  </script>
+
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
