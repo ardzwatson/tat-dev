@@ -1772,6 +1772,21 @@ Ki a Te Moremore-o-te-rangi e!</p>
     const refLabel = document.getElementById('refLabel');
     const cameraBox = document.getElementById('cameraBox');
     const zoomSlider = document.getElementById('zoomSlider');
+
+    // Helper to show/hide the 'How to Install App' button on appropriate views.
+    // Tries a few common selectors for the button so this change is non-invasive
+    // if the app renders the control in different ways. Shows the button only
+    // when the password gate (main login) is visible.
+    const installButtonSelectors = ['#howToInstallBtn', '.how-to-install-btn', '[data-role="how-to-install"]', '#pwaInstallOpenBtn'];
+    function updateInstallButtonVisibility() {
+      try {
+        const btn = installButtonSelectors.map(s => document.querySelector(s)).find(Boolean);
+        if (!btn) return; // nothing to toggle
+        const passwordGateEl = document.getElementById('passwordGate');
+        const isLoginVisible = passwordGateEl && window.getComputedStyle(passwordGateEl).display !== 'none';
+        btn.style.display = isLoginVisible ? 'inline-block' : 'none';
+      } catch (e) { /* best-effort only */ }
+    }
     const zoomLabel = document.getElementById('zoomLabel');
     const zoomUi = document.getElementById('zoomUi');
     const masterTimeline = document.getElementById('masterTimeline');
@@ -3394,6 +3409,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       // ghost/bleed through the hub's semi-transparent background.
       signOutBtn.style.display = 'none';
       videoHubScreen.classList.add('show');
+      updateInstallButtonVisibility();
     }
 
     hubTagFilter.addEventListener('change', () => {
@@ -3908,12 +3924,14 @@ Ki a Te Moremore-o-te-rangi e!</p>
       selectAudioPlaylist(audioPlaylistSelect.value);
       videoHubScreen.classList.remove('show');
       audioPlayerScreen.classList.add('show');
+      updateInstallButtonVisibility();
     }
 
     function closeAudioPlayerScreen() {
       audioPlayerElement.pause();
       audioPlayerScreen.classList.remove('show');
       videoHubScreen.classList.add('show');
+      updateInstallButtonVisibility();
     }
 
     audioPlayerBackBtn.addEventListener('click', closeAudioPlayerScreen);
@@ -4137,6 +4155,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       document.getElementById('appContent').classList.remove('loop-only-mode');
       changeClipBtn.style.display = 'block';
       signOutBtn.style.display = 'block';
+      updateInstallButtonVisibility();
 
       // Apply this clip's poster/thumbnail everywhere it's used - the video
       // poster and the translucent camera alignment guide.
@@ -4175,6 +4194,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       document.getElementById('appContent').classList.add('loop-only-mode');
       changeClipBtn.style.display = 'block';
       signOutBtn.style.display = 'block';
+      updateInstallButtonVisibility();
 
       refVideo.setAttribute('poster', activeThumbnailUrl);
       applySupplementaryImage(clip.referenceImage);
@@ -4227,6 +4247,8 @@ Ki a Te Moremore-o-te-rangi e!</p>
     }
 
     hubSignOutBtn.addEventListener('click', handleSignOut);
+    // Ensure install button visibility is correct on first render
+    setTimeout(updateInstallButtonVisibility, 0);
 
     async function unlockPortal() {
       const passInput = document.getElementById('gatePass');
@@ -4348,6 +4370,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
       const passInput = document.getElementById('gatePass'); if (passInput) passInput.value = '';
       document.getElementById('passwordGate').style.display = 'flex';
+      updateInstallButtonVisibility();
     }
 
     document.getElementById('gatePass').addEventListener('keypress', function(e) { if (e.key === 'Enter') unlockPortal(); });
