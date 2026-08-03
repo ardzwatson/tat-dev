@@ -1332,7 +1332,7 @@
     /* --- PWA INSTALL MODAL STYLES --- */
     .pwa-modal-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(24,24,28,0.6); backdrop-filter: blur(6px); z-index: 10000; }
     #pwaInstallModal { display: none; }
-    .pwa-modal-card { background: #18181c; color: #fff; border-radius: 12px; width: min(720px, 94%); max-width: 720px; padding: 18px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); border: 1px solid rgba(255,123,0,0.08); }
+    .pwa-modal-card { background: #18181c; color: #fff; border-radius: 12px; width: min(720px, 94%); max-width: 720px; padding: 18px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); border: 1px solid rgba(255,123,0,0.08); max-height: 90vh; overflow-y: auto; }
     .pwa-modal-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
     .pwa-modal-title { font-size: 18px; font-weight: 700; }
     .pwa-modal-close { background: transparent; border: none; color: #fff; font-size: 22px; cursor: pointer; }
@@ -1345,6 +1345,7 @@
     .pwa-note { color: #ffd8b8; font-size: 13px; margin-bottom: 8px; }
     .pwa-footer { display: flex; justify-content: flex-end; margin-top: 14px; }
     .pwa-action-btn { background: linear-gradient(90deg,#ff7b00,#ff8f3a); color: #111; border: none; padding: 10px 14px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+    .pwa-modal-card img { width: 100%; max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0 16px 0; border: 1px solid #333; }
 
   </style>
 </head>
@@ -5393,12 +5394,18 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
       <div id="installTabAndroid" class="pwa-tab-content">
         <div class="pwa-note">On Android (Chrome/Edge), use the browser's menu to install.</div>
-        <div class="pwa-ui-box">1. Tap the browser menu (⋮) in Chrome.<br>2. Choose "Install app" or "Add to home screen".</div>
+        <div class="pwa-ui-box">1. Tap the browser menu (⋮) in Chrome.</div>
+        <img src="https://drive.google.com/uc?export=view&id=1NSc7n2KDX3K8wls9uU00FgQbW2VcNkFJ" alt="Chrome menu screenshot">
+        <div class="pwa-ui-box">2. Choose "Install app" or "Add to home screen".</div>
+        <img src="https://drive.google.com/uc?export=view&id=1EHAPQDmJdanzEZxQMQWCIxXwsv6MicM-" alt="Install option screenshot">
       </div>
 
       <div id="installTabIOS" class="pwa-tab-content">
         <div class="pwa-note">On iOS Safari, use the Share button then "Add to Home Screen".</div>
-        <div class="pwa-ui-box">1. Tap the Share button (⎋) in Safari.<br>2. Scroll and choose "Add to Home Screen".</div>
+        <div class="pwa-ui-box">1. Tap the Share button (⎋) in Safari.</div>
+        <img src="https://drive.google.com/uc?export=view&id=13Gg3sj6njCPQ5JKFCXoZqxOHnDPnXUgZ" alt="Safari share screenshot">
+        <div class="pwa-ui-box">2. Scroll and choose "Add to Home Screen".</div>
+        <img src="https://drive.google.com/uc?export=view&id=17oo2-5TjETotA-wgbqSHzwmiqyU9CURh" alt="Add to Home Screen screenshot">
       </div>
 
       <div class="pwa-footer">
