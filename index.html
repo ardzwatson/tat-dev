@@ -674,7 +674,14 @@
        loop markers (orange) all live on the exact same track, so there's no
        misalignment or dueling drag systems between separate sliders - that
        mismatch was the main source of the inconsistent mobile behavior. */
-    .ref-unified-track { position: relative; flex-grow: 1; height: 6px; background: #333; border-radius: 3px; touch-action: none; }
+    /* margin-left/right reserve room equal to the handle's half-width (9px)
+       so a handle sitting at left:0% or left:100% (with its own -9px
+       margin-left, see .ref-handle below) stays fully inside this track's
+       visible/tappable area instead of half-overflowing past the edge -
+       previously that overflow could land under a clipping ancestor or the
+       raw viewport edge, making the extreme ends of the track unresponsive
+       to touch/drag on mobile. */
+    .ref-unified-track { position: relative; flex-grow: 1; height: 6px; background: #333; border-radius: 3px; touch-action: none; margin-left: 9px; margin-right: 9px; }
     .ref-loop-range-fill { position: absolute; top: 0; bottom: 0; left: 0%; right: 0%; background: rgba(255, 149, 0, 0.35); border-radius: 3px; pointer-events: none; }
     .ref-handle {
       position: absolute; top: 50%; left: 0%; width: 18px; height: 18px; margin-left: -9px;
@@ -1115,11 +1122,20 @@
 
     .audio-progress-track {
       position: relative;
-      width: 100%;
       height: 6px;
       background: rgba(255,255,255,0.15);
       border-radius: 3px;
       margin-top: 18px;
+      /* Inset 9px on each side - exactly the handle's half-width (see
+         .audio-progress-handle's own -9px margin-left below). Without this,
+         the handle at left:0%/100% oversteps this track's box by 9px on
+         either end; inside .audio-scroll-area (which scrolls vertically)
+         that overshoot could get clipped and stop responding to touch right
+         at the very start/end of the bar. Insetting the track itself means
+         the handle's pull-back lands flush with the true edge instead of
+         beyond it. */
+      margin-left: 9px;
+      margin-right: 9px;
       flex-shrink: 0;
       touch-action: none;
       cursor: pointer;
@@ -3284,7 +3300,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
     function populateTagFilter(cards) {
       const uniqueTags = Array.from(new Set(cards.map(c => c.tag).filter(t => t))).sort((a, b) => a.localeCompare(b));
-      hubTagFilter.innerHTML = '<option value="all">KATOA</option>' +
+      hubTagFilter.innerHTML = '<option value="all">All</option>' +
         uniqueTags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
       hubTagFilter.value = 'all';
     }
@@ -3382,6 +3398,42 @@ Ki a Te Moremore-o-te-rangi e!</p>
     let audioRepeatMode = 'playlist'; // openAudioPlayerScreen() resets this to 'playlist' on every open regardless - see requirement 2
     let audioFavoriteTrackIds = loadAudioFavorites();
     let audioTrackMenuTargetClip = null;
+
+    // --- Next-track preloading (reduces the lag/gap when a track changes) ---
+    // A second, hidden <audio> element that is never attached to the DOM,
+    // never has its controls exposed, and is never played - its only job is
+    // to sit on "the next track" and let the browser start buffering that
+    // file in the background while the current track is still playing, so
+    // by the time playback actually switches to it the audio data is
+    // already warm in the browser's cache instead of starting a fresh
+    // network fetch at that moment (which is what caused the audible
+    // lag/gap on track change). Muted defensively so it can never
+    // accidentally produce sound even if something mistakenly called
+    // .play() on it.
+    const audioPreloadEl = new Audio();
+    audioPreloadEl.preload = 'auto';
+    audioPreloadEl.muted = true;
+    audioPreloadEl.crossOrigin = 'anonymous';
+
+    // Figures out whichever track would play next (mirrors the wrap/stop
+    // logic in playAudioAtOrderPosition without actually touching playback
+    // state) and points the preloader at it, if it isn't already.
+    function preloadNextAudioTrack() {
+      const count = audioPlayOrder.length;
+      if (count === 0) return;
+      let nextOrderPos = audioQueuePosition + 1;
+      if (audioRepeatMode === 'playlist' || audioRepeatMode === 'track') {
+        nextOrderPos = ((nextOrderPos % count) + count) % count;
+      } else if (nextOrderPos >= count) {
+        return; // no next track queued up (repeat is off and we're at the end)
+      }
+      const nextTrack = audioQueueTracks[audioPlayOrder[nextOrderPos]];
+      if (!nextTrack || !nextTrack.audioStreamUrl) return;
+      if (audioPreloadEl.src !== nextTrack.audioStreamUrl) {
+        audioPreloadEl.src = nextTrack.audioStreamUrl;
+        audioPreloadEl.load();
+      }
+    }
 
     const AUDIO_FAVORITES_STORAGE_KEY = 'kapaSyncAudioFavorites';
 
@@ -3485,10 +3537,18 @@ Ki a Te Moremore-o-te-rangi e!</p>
       }
     }
 
-    let mediaSessionHandlersReady = false;
-    function setupMediaSessionHandlersOnce() {
-      if (mediaSessionHandlersReady || !('mediaSession' in navigator)) return;
-      mediaSessionHandlersReady = true;
+    // Re-registers every Media Session action handler. setActionHandler() is
+    // idempotent/cheap (re-setting the same handler is a no-op cost-wise),
+    // so - unlike the old "only ever bind once" version - this is safe to
+    // call repeatedly: on every track load, every visibility change, and
+    // from the heartbeat below. That repetition is deliberate: some Android
+    // WebView/Chrome builds have been observed to silently drop previously
+    // registered handlers after a track change or a background/foreground
+    // cycle, which is what caused lock-screen controls (and, transitively,
+    // continued background playback) to stop responding after the very
+    // first track.
+    function reassertMediaSessionHandlers() {
+      if (!('mediaSession' in navigator)) return;
 
       const safeSetHandler = (action, handler) => {
         try { navigator.mediaSession.setActionHandler(action, handler); }
@@ -3531,6 +3591,42 @@ Ki a Te Moremore-o-te-rangi e!</p>
           : audioPlayerElement.currentTime + skip;
         updateMediaSessionPositionState();
       });
+    }
+    // Kept as an alias so existing call sites (screen open, etc.) read the
+    // same as before - it's just no longer gated to a single first call.
+    function setupMediaSessionHandlersOnce() { reassertMediaSessionHandlers(); }
+
+    // --- Media Session heartbeat: keeps the lock-screen/notification state
+    // truthful while a track is actively playing, including while the page
+    // is hidden/backgrounded. This is a defense-in-depth measure on top of
+    // the 'play'/'pause' event listeners and the visibilitychange handler
+    // below - some Android builds have been seen to let the Media Session's
+    // own internal playbackState/position drift stale after a while in the
+    // background even though the <audio> element itself is still genuinely
+    // playing, which is what shows up as playback "randomly" appearing to
+    // stop from the lock screen's perspective (or the OS deciding it's safe
+    // to tear down a session it believes is idle). Re-asserting periodically
+    // costs nothing while paused (the interval is only running while
+    // actually playing) and is cheap even while backgrounded, since Chrome's
+    // background-tab timer throttling (roughly once/minute after several
+    // minutes hidden) still fires often enough to keep this meaningfully
+    // fresh for a lock-screen scrubber.
+    let mediaSessionHeartbeatInterval = null;
+    const MEDIA_SESSION_HEARTBEAT_MS = 15000;
+    function startMediaSessionHeartbeat() {
+      stopMediaSessionHeartbeat();
+      mediaSessionHeartbeatInterval = setInterval(() => {
+        if (audioPlayerElement.paused) return;
+        reassertMediaSessionHandlers();
+        updateMediaSessionPlaybackState();
+        updateMediaSessionPositionState();
+      }, MEDIA_SESSION_HEARTBEAT_MS);
+    }
+    function stopMediaSessionHeartbeat() {
+      if (mediaSessionHeartbeatInterval) {
+        clearInterval(mediaSessionHeartbeatInterval);
+        mediaSessionHeartbeatInterval = null;
+      }
     }
 
     function updateMediaSessionPlaybackState() {
@@ -3615,14 +3711,29 @@ Ki a Te Moremore-o-te-rangi e!</p>
       audioMediaThumb.src = track.audioThumbnailUrl || track.thumbnailUrl || DEFAULT_THUMBNAIL_URL;
 
       updateAudioFavoriteButton();
-      renderAudioQueue();
       updateMediaSessionMetadata(track);
 
+      // .play() is issued immediately, synchronously with this call, so a
+      // fresh gesture/auto-advance is never delayed waiting on anything
+      // else here - the browser handles the actual network fetch/decode
+      // for it asynchronously off the main thread regardless.
       if (autoplay) {
         audioPlayerElement.play().then(() => {
           navigator.mediaSession && (navigator.mediaSession.playbackState = 'playing');
-        }).catch(() => {});
+          reassertMediaSessionHandlers();
+        }).catch((err) => {
+          console.warn('[Audio Player] Autoplay on track change failed:', err);
+        });
       }
+
+      // Both of these touch the DOM/network but don't affect playback
+      // itself - deferred one tick (rather than run inline before .play()
+      // above) purely so they can never be perceived as adding to the
+      // track-change lag on slower devices.
+      setTimeout(() => {
+        renderAudioQueue();
+        preloadNextAudioTrack();
+      }, 0);
     }
 
     function updateAudioFavoriteButton() {
@@ -3801,8 +3912,8 @@ Ki a Te Moremore-o-te-rangi e!</p>
         navigator.mediaSession && (navigator.mediaSession.playbackState = 'paused');
       }
     });
-    audioPlayerElement.addEventListener('play', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); updateMediaSessionPositionState(); });
-    audioPlayerElement.addEventListener('pause', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); });
+    audioPlayerElement.addEventListener('play', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); updateMediaSessionPositionState(); startMediaSessionHeartbeat(); });
+    audioPlayerElement.addEventListener('pause', () => { updateAudioPlayPauseIcon(); updateMediaSessionPlaybackState(); stopMediaSessionHeartbeat(); });
 
     audioPrevBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition - 1, true));
     audioNextBtn.addEventListener('click', () => playAudioAtOrderPosition(audioQueuePosition + 1, true));
@@ -3841,12 +3952,26 @@ Ki a Te Moremore-o-te-rangi e!</p>
     // through the queue; playlist repeat/off fall through to the normal
     // next-track advance (which itself wraps only when repeat is active -
     // see playAudioAtOrderPosition above).
+    // This listener is what has to keep firing/advancing reliably while the
+    // app is backgrounded for auto-advance to work at all - it's attached
+    // directly to the <audio> element itself (not gated behind any
+    // visibility check, rAF loop, or timer that Chrome/Android might
+    // throttle while hidden), so it keeps running exactly the same whether
+    // the screen is on or off. Re-asserting the Media Session handlers here
+    // (not just on the next play/pause event) closes the gap where a
+    // backgrounded auto-advance could otherwise land on a session whose
+    // action handlers had gone stale, which is what could make the OS UI
+    // (and therefore playback) look like it "randomly" stopped at that
+    // track's end instead of continuing.
     audioPlayerElement.addEventListener('ended', () => {
+      reassertMediaSessionHandlers();
       if (audioRepeatMode === 'track') {
         audioPlayerElement.currentTime = 0;
         audioPlayerElement.play().then(() => {
           navigator.mediaSession && (navigator.mediaSession.playbackState = 'playing');
-        }).catch(() => {});
+        }).catch((err) => {
+          console.warn('[Audio Player] Replay of single-track repeat failed:', err);
+        });
         return;
       }
       playAudioAtOrderPosition(audioQueuePosition + 1, true);
@@ -3881,6 +4006,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         if (!audioPlayerElement.paused) {
+          reassertMediaSessionHandlers();
           const track = currentAudioTrack();
           if (track) updateMediaSessionMetadata(track);
           updateMediaSessionPlaybackState();
@@ -3889,9 +4015,14 @@ Ki a Te Moremore-o-te-rangi e!</p>
       } else {
         // Returning to the foreground - some browsers throttle/coalesce
         // timeupdate while hidden, so resync the visible UI immediately
-        // rather than waiting for the next tick.
+        // rather than waiting for the next tick. Handlers are reasserted
+        // here too, in case anything was dropped while backgrounded (and
+        // in case the heartbeat itself got throttled down to nothing for a
+        // long background stretch).
+        reassertMediaSessionHandlers();
         updateAudioProgressUi();
         updateAudioPlayPauseIcon();
+        if (!audioPlayerElement.paused) startMediaSessionHeartbeat();
       }
     });
 
