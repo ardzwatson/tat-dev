@@ -3284,7 +3284,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
     function populateTagFilter(cards) {
       const uniqueTags = Array.from(new Set(cards.map(c => c.tag).filter(t => t))).sort((a, b) => a.localeCompare(b));
-      hubTagFilter.innerHTML = '<option value="all">All</option>' +
+      hubTagFilter.innerHTML = '<option value="all">KATOA</option>' +
         uniqueTags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
       hubTagFilter.value = 'all';
     }
