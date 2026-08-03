@@ -3568,39 +3568,108 @@ Ki a Te Moremore-o-te-rangi e!</p>
     function isVideoUrl(url) {
       if (!url) return false;
       const lowerUrl = url.toLowerCase();
-      // Check for Bunny.net video indicators
+
+      // HLS playlist indicators
+      if (lowerUrl.includes('.m3u8') || lowerUrl.includes('playlist.m3u8') || lowerUrl.includes('/playlist/')) {
+        return true;
+      }
+
+      // Check for Bunny.net video indicators and common video extensions
       if (lowerUrl.includes('bunnycdn') || lowerUrl.includes('bunny.net')) {
-        // Additional check - if it contains video-specific patterns, it's likely a video
-        if (lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('v.bunnycdn')) {
+        if (lowerUrl.includes('.mp4') || lowerUrl.includes('.webm') || lowerUrl.includes('v.bunnycdn') || lowerUrl.includes('.m3u8')) {
           return true;
         }
       }
+
       // Check for direct video file extensions
       if (lowerUrl.endsWith('.mp4') || lowerUrl.endsWith('.webm') || lowerUrl.endsWith('.mov')) {
         return true;
       }
+
       return false;
     }
 
     function renderAudioMediaCard(url, fallbackUrl) {
       const mediaCard = document.getElementById('audioMediaCard');
       if (!mediaCard) return;
-      
-      mediaCard.innerHTML = '';
-      
-      if (!url) {
-        // Fall back to the fallback URL (usually the video thumbnail)
-        if (fallbackUrl) {
+
+      // Helper to render an image fallback
+      const showImageFallback = (imgUrl) => {
+        mediaCard.innerHTML = '';
+        if (imgUrl) {
           const img = document.createElement('img');
           img.alt = '';
           img.crossOrigin = 'anonymous';
           img.referrerPolicy = 'no-referrer';
-          img.src = fallbackUrl;
+          img.src = imgUrl;
           mediaCard.appendChild(img);
         }
+      };
+
+      mediaCard.innerHTML = '';
+
+      // If there's no provided URL, use the fallback (Column D) if available
+      if (!url) {
+        showImageFallback(fallbackUrl);
         return;
       }
 
+      const lowerUrl = url.toLowerCase();
+      const isHls = lowerUrl.endsWith('.m3u8') || lowerUrl.includes('playlist.m3u8') || lowerUrl.includes('/playlist/');
+
+      // Handle HLS playlists specially
+      if (isHls) {
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.crossOrigin = 'anonymous';
+        video.referrerPolicy = 'no-referrer';
+        video.controls = false;
+        mediaCard.appendChild(video);
+
+        // If the browser can play HLS natively (Safari / iOS), set src directly
+        try {
+          if (video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl') !== '') {
+            video.src = url;
+            video.addEventListener('error', function onNativeError() {
+              video.removeEventListener('error', onNativeError);
+              showImageFallback(fallbackUrl);
+            });
+            return;
+          }
+        } catch (e) {
+          // fall through to Hls.js attempt
+        }
+
+        // If Hls.js is available and supported, use it to attach the playlist
+        if (window.Hls && window.Hls.isSupported && window.Hls.isSupported()) {
+          try {
+            const hls = new window.Hls();
+            hls.attachMedia(video);
+            hls.on(window.Hls.Events.ERROR, function (event, data) {
+              // On fatal errors, destroy Hls and fall back to an image
+              if (data && data.fatal) {
+                try { hls.destroy(); } catch (err) {}
+                showImageFallback(fallbackUrl);
+              }
+            });
+            hls.loadSource(url);
+            return;
+          } catch (e) {
+            // If Hls.js attach failed, fall back to image
+            showImageFallback(fallbackUrl);
+            return;
+          }
+        }
+
+        // No native or Hls.js support - fall back to image
+        showImageFallback(fallbackUrl);
+        return;
+      }
+
+      // Non-HLS video URLs (mp4/webm) - render as plain <video>
       if (isVideoUrl(url)) {
         const video = document.createElement('video');
         video.autoplay = true;
@@ -3610,15 +3679,13 @@ Ki a Te Moremore-o-te-rangi e!</p>
         video.crossOrigin = 'anonymous';
         video.referrerPolicy = 'no-referrer';
         video.src = url;
+        video.addEventListener('error', () => showImageFallback(fallbackUrl));
         mediaCard.appendChild(video);
-      } else {
-        const img = document.createElement('img');
-        img.alt = '';
-        img.crossOrigin = 'anonymous';
-        img.referrerPolicy = 'no-referrer';
-        img.src = url;
-        mediaCard.appendChild(img);
+        return;
       }
+
+      // Otherwise treat as a static image
+      showImageFallback(url);
     }
 
     function formatAudioTime(seconds) {
