@@ -606,20 +606,40 @@
       }
     }
 
-    /* Mobile portrait layout adjustment for player controls */
+    /* Mobile portrait layout adjustment for player controls (applies only when NOT fullscreen) */
     @media screen and (max-width: 768px) and (orientation: portrait) {
-      .ref-audio-track-bar {
+      /* Keep the wrapping/flowing behavior for language buttons when the video is not fullscreen
+         so buttons wrap horizontally and vertically across the top instead of stacking. */
+      #videoBox:not(.ref-is-fullscreen) .ref-audio-track-bar {
         top: 12px !important;
         left: 50% !important;
         transform: translateX(-50%) !important;
-        flex-direction: column !important;
-        align-items: flex-end !important;
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        justify-content: center !important;
+        align-items: flex-start !important;
         gap: 8px !important;
+        max-width: calc(100% - 32px) !important;
+        padding: 6px 8px !important;
       }
-      .ref-speed-select {
-        position: static !important;
-        display: block !important;
-        margin-top: 8px !important;
+
+      /* Speed select should not stretch full width and should be low-opacity by default */
+      #videoBox:not(.ref-is-fullscreen) .ref-speed-select {
+        position: relative !important;
+        display: inline-block !important;
+        margin-top: 6px !important;
+        align-self: flex-start !important;
+        width: auto !important;
+        min-width: 64px !important;
+        max-width: 40% !important;
+        opacity: 0.2 !important;
+        transition: opacity 0.18s ease, transform 0.12s ease !important;
+      }
+      #videoBox:not(.ref-is-fullscreen) .ref-speed-select:hover,
+      #videoBox:not(.ref-is-fullscreen) .ref-speed-select:focus,
+      #videoBox:not(.ref-is-fullscreen) .ref-speed-select:active {
+        opacity: 1 !important;
       }
     }
 
@@ -960,18 +980,19 @@
     }
 
     .hub-card {
-      background: #1c1c1e;
-      border: 1px solid #2c2c2e;
+      background: linear-gradient(160deg, rgba(28,12,6,0.9), rgba(18,8,4,0.9));
+      border: 1px solid rgba(255,123,0,0.16);
       border-radius: 12px;
       overflow: hidden;
       cursor: pointer;
       display: flex;
       flex-direction: column;
-      transition: transform 0.1s ease, border-color 0.15s ease;
+      transition: transform 0.1s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.6), 0 0 0 3px rgba(255,123,0,0.03);
     }
     .hub-card:active { transform: scale(0.96); }
-    .hub-card:hover { border-color: #007aff; }
-    .hub-card.hub-card-default { border-color: #5856d6; }
+    .hub-card:hover { border-color: rgba(255,123,0,0.32); box-shadow: 0 10px 28px rgba(255,123,0,0.06); }
+    .hub-card.hub-card-default { border-color: rgba(88,86,214,0.6); }
 
     .hub-card-thumb {
       width: 100%;
@@ -982,16 +1003,17 @@
     }
     .hub-card-name {
       font-family: 'Marcellus', serif;
-      color: white;
+      color: #ffd8b8;
       font-size: 12px;
       font-weight: bold;
       padding: 8px 10px;
       text-align: center;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.6);
     }
     .hub-card-badge {
       font-family: 'Marcellus', serif;
       font-size: 9px;
-      color: #5856d6;
+      color: rgba(255,123,0,0.9);
       text-transform: uppercase;
       letter-spacing: 0.5px;
       padding: 0 10px 6px 10px;
@@ -1004,12 +1026,13 @@
       justify-content: center;
       padding: 18px 10px;
       text-align: center;
-      border-color: #ff6b6b;
-      background: linear-gradient(160deg, #2a1a3a, #1c1c1e);
+      border-color: rgba(255,123,0,0.45);
+      background: linear-gradient(160deg, rgba(42,10,6,0.9), rgba(28,8,4,0.9));
+      box-shadow: 0 8px 28px rgba(255,123,0,0.06), inset 0 1px 0 rgba(255,200,150,0.02);
     }
-    .hub-card-audio-player:hover { border-color: #ff8a8a; }
+    .hub-card-audio-player:hover { border-color: rgba(255,123,0,0.6); box-shadow: 0 12px 34px rgba(255,123,0,0.08); }
     .hub-card-audio-icon { font-size: 30px; line-height: 1; margin-bottom: 8px; }
-    .hub-card-badge-audio { color: #ff6b6b; padding: 0 10px 4px 10px; }
+    .hub-card-badge-audio { color: rgba(255,180,120,0.95); padding: 0 10px 4px 10px; }
 
     .hub-empty-message {
       color: #8e8e93;
@@ -2084,8 +2107,19 @@ Ki a Te Moremore-o-te-rangi e!</p>
         return;
       }
 
-      if (videoBox.requestFullscreen) videoBox.requestFullscreen().catch(() => {});
-      else if (videoBox.webkitRequestFullscreen) videoBox.webkitRequestFullscreen();
+      // Try to request fullscreen with navigation UI hidden where supported to
+      // suppress the standard system/browser 'how to exit full-screen' overlay.
+      if (videoBox.requestFullscreen) {
+        try {
+          // Some browsers support an options object with navigationUI: 'hide'
+          videoBox.requestFullscreen({ navigationUI: 'hide' });
+        } catch (e) {
+          // Fallback to the plain call if options are not supported
+          videoBox.requestFullscreen().catch(() => {});
+        }
+      } else if (videoBox.webkitRequestFullscreen) {
+        try { videoBox.webkitRequestFullscreen(); } catch (e) { /* ignore */ }
+      }
     });
 
     // --- Fullscreen center play/pause button + progress bar ---
