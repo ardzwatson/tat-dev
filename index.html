@@ -617,9 +617,10 @@
         left: 50%;
         right: auto;
         bottom: 12px;
-        transform: translateX(calc(-50% + 45px));
+        transform: translateX(calc(-50% + 24px));
       }
     }
+
 
     .box { position: relative; width: 100%; flex: 1 1 0%; height: 0; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
     .viewfinder-container { width: 100%; height: 100%; position: relative; overflow: hidden; background: #000; }
@@ -2208,13 +2209,13 @@ Ki a Te Moremore-o-te-rangi e!</p>
     refVideo.addEventListener('play', () => {
       if (isRefFullscreen()) updateFsPlayPauseIcon();
       if (isPreviewingRef && !loopOnlyAwaitingFirstPlay && !isRecordingMode && !isReviewMode) {
-        previewRefBtn.innerText = "Pause Preview";
+        previewRefBtn.innerText = currentClipIsLoopOnly ? "Pause" : "Pause Preview";
       }
     });
     refVideo.addEventListener('pause', () => {
       if (isRefFullscreen()) updateFsPlayPauseIcon();
       if (isPreviewingRef && !loopOnlyAwaitingFirstPlay && !isRecordingMode && !isReviewMode) {
-        previewRefBtn.innerText = "Resume Preview";
+        previewRefBtn.innerText = currentClipIsLoopOnly ? "Play" : "Resume Preview";
       }
     });
 
@@ -4371,10 +4372,13 @@ Ki a Te Moremore-o-te-rangi e!</p>
       // without starting playback - the first real tap on Preview Ref does that.
       isPreviewingRef = true;
       loopOnlyAwaitingFirstPlay = true;
-      previewRefBtn.innerText = "Preview Ref";
+      previewRefBtn.innerText = "Play";
       previewRefBtn.classList.remove('previewing');
       previewRefBtn.classList.add('ready-to-play');
-      refLabel.innerHTML = `<span>REFERENCE LESSON (PREVIEWING)</span>`;
+      // Reference Only clips (Column G) skip the camera entirely, so the
+      // "PREVIEWING" qualifier - which exists to distinguish the reference
+      // video from a live camera feed - has nothing to contrast against here.
+      refLabel.innerHTML = '';
 
       const stageAtStart = () => {
         if (refVideo.duration && isFinite(refVideo.duration) && refVideo.duration > 0) {
@@ -4650,7 +4654,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
         loopOnlyAwaitingFirstPlay = false;
         previewRefBtn.classList.remove('ready-to-play');
         previewRefBtn.classList.add('previewing');
-        previewRefBtn.innerText = "Pause Preview";
+        previewRefBtn.innerText = currentClipIsLoopOnly ? "Pause" : "Pause Preview";
         refVideo.play().catch(() => {});
         return;
       }
@@ -4658,9 +4662,12 @@ Ki a Te Moremore-o-te-rangi e!</p>
       if (!isPreviewingRef) {
         // First tap: enter preview mode fresh, starting from the top.
         isPreviewingRef = true;
-        previewRefBtn.innerText = "Pause Preview";
+        previewRefBtn.innerText = currentClipIsLoopOnly ? "Pause" : "Pause Preview";
         previewRefBtn.classList.add('previewing');
-        refLabel.innerHTML = `<span>REFERENCE LESSON (PREVIEWING)</span>`;
+        // Reference Only clips (Column G) skip the camera entirely, so the
+        // "PREVIEWING" qualifier - which exists to distinguish the reference
+        // video from a live camera feed - has nothing to contrast against here.
+        refLabel.innerHTML = currentClipIsLoopOnly ? '' : `<span>REFERENCE LESSON (PREVIEWING)</span>`;
 
         // Show reference timeline + loop range controls
         if (refVideo.duration && isFinite(refVideo.duration) && refVideo.duration > 0) {
@@ -4676,11 +4683,11 @@ Ki a Te Moremore-o-te-rangi e!</p>
       } else if (!refVideo.paused) {
         // Already previewing and playing: pause in place, don't reset position.
         refVideo.pause();
-        previewRefBtn.innerText = "Resume Preview";
+        previewRefBtn.innerText = currentClipIsLoopOnly ? "Play" : "Resume Preview";
       } else {
         // Already previewing and paused: resume from exactly where it left off.
         refVideo.play().catch(() => {});
-        previewRefBtn.innerText = "Pause Preview";
+        previewRefBtn.innerText = currentClipIsLoopOnly ? "Pause" : "Pause Preview";
       }
     });
 
