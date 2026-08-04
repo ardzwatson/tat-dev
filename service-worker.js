@@ -9,7 +9,7 @@
 // video seeking / audio scrubbing) don't play well with a naive SW cache
 // intercepting them.
 
-const STATIC_CACHE_NAME = 'tta-static-v1';
+const STATIC_CACHE_NAME = 'tta-static-v2';
 const SHEETS_CACHE_NAME = 'tta-sheets-v1';
 
 // The app shell: just enough to boot the page from a cold cache/offline.
