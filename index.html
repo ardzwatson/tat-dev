@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Tahuna Te Ahi! 🔥 (32.0)</title>
+  <title>Tahuna Te Ahi! 🔥 (32.1)</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#121212">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -670,10 +670,10 @@
       overflow: hidden;
     }
     
-.label { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; letter-spacing: 0.5px; z-index: 10; pointer-events: none; display: flex; flex-direction: column; gap: 2px; }
-#refLabel { background: rgba(46, 125, 50, 0.7); }
-#refLabel:empty { display: none; }
-#streamLabel { background: rgba(139, 0, 0, 0.7); }
+    .label { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; letter-spacing: 0.5px; z-index: 10; pointer-events: none; display: flex; flex-direction: column; gap: 2px; }
+    #refLabel { background: rgba(46, 125, 50, 0.7); }
+    #refLabel:empty { display: none; }
+    #streamLabel { background: rgba(139, 0, 0, 0.7); } 
     #streamLabel.review-active { background: rgba(0, 0, 0, 0.7) !important; } 
     
     .zoom-note { font-size: 8px; color: #aaa; font-weight: normal; }
@@ -1310,6 +1310,27 @@
       opacity: 0.3;
     }
     .audio-track-heart.is-favorited { opacity: 1; filter: drop-shadow(0 0 4px rgba(255,123,0,0.7)); }
+    .audio-track-download-btn {
+      font-size: 15px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: white;
+      padding: 2px;
+      opacity: 0.5;
+      min-width: 24px;
+      text-align: center;
+    }
+    .audio-track-download-btn:hover { opacity: 0.85; }
+    .audio-track-download-btn.is-downloaded { opacity: 1; color: #5ed17d; }
+    .audio-track-download-btn.is-downloading {
+      opacity: 1;
+      color: #FFB300;
+      cursor: default;
+      font-size: 9px;
+      font-family: 'Marcellus', serif;
+      font-weight: bold;
+    }
     .audio-track-menu-btn {
       font-size: 16px;
       background: transparent;
@@ -2136,7 +2157,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       refFsProgressFill.style.width = `${pct}%`;
     }
 
-     videoBox.addEventListener('click', (e) => {
+    videoBox.addEventListener('click', (e) => {
       if (!isRefFullscreen()) return;
       if (e.target === refFsPlayPauseBtn || e.target === refFullscreenBtn) return;
       if (refFsProgressBar.contains(e.target)) return;
@@ -3468,6 +3489,266 @@ Ki a Te Moremore-o-te-rangi e!</p>
     // URL; the media card is purely visual (a muted looping video from
     // Column C if present, else the Column D thumbnail).
 
+    // --- Offline Audio Downloads (encrypted at rest via Web Crypto AES-GCM) ---
+    // Downloaded tracks are stored in IndexedDB as an encrypted ArrayBuffer
+    // + its IV, alongside a single non-extractable AES-GCM CryptoKey (also
+    // stored directly in IndexedDB - browsers support serializing CryptoKey
+    // objects via structured clone). Because the key is generated with
+    // extractable: false, no code path (including this app's own) can ever
+    // call crypto.subtle.exportKey() to pull out the raw key bytes - only
+    // encrypt/decrypt operations against it are possible. This raises the
+    // bar against casual copying (nothing in IndexedDB is a plain,
+    // draggable audio file) but - like any browser-based protection - can't
+    // stop a sufficiently determined person, since the browser must still
+    // hand decrypted audio to the <audio> element during playback.
+    const OFFLINE_DB_NAME = 'kapaSyncOfflineAudio';
+    const OFFLINE_DB_VERSION = 1;
+    const OFFLINE_BLOB_STORE = 'audioBlobs';
+    const OFFLINE_KEY_STORE = 'cryptoKeys';
+    const OFFLINE_KEY_RECORD_NAME = 'audioKey';
+
+    let offlineDbPromise = null;
+    function openOfflineDb() {
+      if (offlineDbPromise) return offlineDbPromise;
+      offlineDbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(OFFLINE_BLOB_STORE)) {
+            db.createObjectStore(OFFLINE_BLOB_STORE, { keyPath: 'clipId' });
+          }
+          if (!db.objectStoreNames.contains(OFFLINE_KEY_STORE)) {
+            db.createObjectStore(OFFLINE_KEY_STORE, { keyPath: 'name' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      return offlineDbPromise;
+    }
+
+    function idbRequestToPromise(request) {
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    let cachedOfflineKey = null;
+    async function getOrCreateOfflineKey() {
+      if (cachedOfflineKey) return cachedOfflineKey;
+      const db = await openOfflineDb();
+      const readTx = db.transaction(OFFLINE_KEY_STORE, 'readonly');
+      const existing = await idbRequestToPromise(readTx.objectStore(OFFLINE_KEY_STORE).get(OFFLINE_KEY_RECORD_NAME));
+      if (existing && existing.key) {
+        cachedOfflineKey = existing.key;
+        return cachedOfflineKey;
+      }
+      const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      const writeTx = db.transaction(OFFLINE_KEY_STORE, 'readwrite');
+      await idbRequestToPromise(writeTx.objectStore(OFFLINE_KEY_STORE).put({ name: OFFLINE_KEY_RECORD_NAME, key }));
+      cachedOfflineKey = key;
+      return cachedOfflineKey;
+    }
+
+    // In-flight download tracking (keyed by clip ID) - lets the UI show
+    // progress and stops a second tap from starting a duplicate fetch.
+    const audioDownloadsInProgress = new Set();
+    // Populated from IndexedDB whenever the Audio Player screen opens.
+    const audioDownloadedTrackIds = new Set();
+    // Decrypted Blob URLs kept warm in memory for the session - see the
+    // preloadNextAudioTrack() and loadAudioTrackIntoPlayer() changes below
+    // for why this exists (autoplay-gesture timing).
+    const offlineDecryptedUrlCache = new Map();
+
+    async function refreshDownloadedTrackIdsCache() {
+      try {
+        const db = await openOfflineDb();
+        const tx = db.transaction(OFFLINE_BLOB_STORE, 'readonly');
+        const keys = await idbRequestToPromise(tx.objectStore(OFFLINE_BLOB_STORE).getAllKeys());
+        audioDownloadedTrackIds.clear();
+        keys.forEach((k) => audioDownloadedTrackIds.add(k));
+      } catch (e) {
+        console.warn('[Offline Audio] Failed to read downloaded track list:', e);
+      }
+    }
+
+    function isTrackDownloaded(clipId) {
+      return audioDownloadedTrackIds.has(clipId);
+    }
+
+    async function downloadTrackForOffline(track, onProgress) {
+      if (!track || !track.audioStreamUrl) return false;
+      if (audioDownloadsInProgress.has(track.id) || isTrackDownloaded(track.id)) return false;
+
+      audioDownloadsInProgress.add(track.id);
+      try {
+        // Best-effort: reduces the chance Android evicts this origin's
+        // storage under disk pressure. Not supported everywhere - silent
+        // no-op if unavailable.
+        if (navigator.storage && navigator.storage.persist) {
+          navigator.storage.persist().catch(() => {});
+        }
+
+        const response = await fetch(track.audioStreamUrl);
+        if (!response.ok || !response.body) throw new Error(`Download failed: HTTP ${response.status}`);
+
+        const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (onProgress && contentLength > 0) {
+            onProgress(Math.min(99, Math.round((received / contentLength) * 100)));
+          }
+        }
+
+        const rawBuffer = await new Blob(chunks).arrayBuffer();
+        const mimeType = response.headers.get('content-type') || 'audio/mpeg';
+
+        const key = await getOrCreateOfflineKey();
+        const iv = crypto.getRandomValues(new Uint8Array(12)); // standard AES-GCM IV size
+        const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, rawBuffer);
+
+        const db = await openOfflineDb();
+        const tx = db.transaction(OFFLINE_BLOB_STORE, 'readwrite');
+        await idbRequestToPromise(tx.objectStore(OFFLINE_BLOB_STORE).put({
+          clipId: track.id,
+          encrypted,
+          iv,
+          mimeType,
+          size: rawBuffer.byteLength,
+          downloadedAt: Date.now()
+        }));
+
+        audioDownloadedTrackIds.add(track.id);
+        if (onProgress) onProgress(100);
+        return true;
+      } catch (err) {
+        console.error('[Offline Audio] Download failed for', track.id, err);
+        return false;
+      } finally {
+        audioDownloadsInProgress.delete(track.id);
+      }
+    }
+
+    async function removeDownloadedTrack(clipId) {
+      try {
+        const db = await openOfflineDb();
+        const tx = db.transaction(OFFLINE_BLOB_STORE, 'readwrite');
+        await idbRequestToPromise(tx.objectStore(OFFLINE_BLOB_STORE).delete(clipId));
+        audioDownloadedTrackIds.delete(clipId);
+        const cachedUrl = offlineDecryptedUrlCache.get(clipId);
+        if (cachedUrl) {
+          // Don't revoke a Blob URL that's actively assigned as the audio
+          // element's current source - that would silently kill in-progress
+          // playback. It'll be cleaned up next time offlineDecryptedUrlCache
+          // is cleared wholesale (sign-out) instead.
+          if (audioPlayerElement.src !== cachedUrl) {
+            URL.revokeObjectURL(cachedUrl);
+          }
+          offlineDecryptedUrlCache.delete(clipId);
+        }
+        return true;
+      } catch (err) {
+        console.error('[Offline Audio] Failed to remove download for', clipId, err);
+        return false;
+      }
+    }
+
+    // Decrypts a stored track into a playable Blob URL. Returns null if
+    // the track isn't downloaded or decryption fails - callers fall back
+    // to the network URL in that case.
+    async function getPlayableOfflineUrl(clipId) {
+      try {
+        const db = await openOfflineDb();
+        const tx = db.transaction(OFFLINE_BLOB_STORE, 'readonly');
+        const record = await idbRequestToPromise(tx.objectStore(OFFLINE_BLOB_STORE).get(clipId));
+        if (!record) return null;
+
+        const key = await getOrCreateOfflineKey();
+        const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv }, key, record.encrypted);
+        const blob = new Blob([decrypted], { type: record.mimeType || 'audio/mpeg' });
+        return URL.createObjectURL(blob);
+      } catch (err) {
+        console.error('[Offline Audio] Failed to decrypt offline track', clipId, err);
+        return null;
+      }
+    }
+
+    // Decrypts a downloaded track into offlineDecryptedUrlCache ahead of
+    // time (if it isn't cached already), so a later tap on Play/Next for
+    // that track can assign audioPlayerElement.src synchronously - see
+    // preloadNextAudioTrack() and loadAudioTrackIntoPlayer() below.
+    async function warmOfflineDecryptCache(clipId) {
+      if (!clipId || offlineDecryptedUrlCache.has(clipId) || !isTrackDownloaded(clipId)) return;
+      const url = await getPlayableOfflineUrl(clipId);
+      if (url) offlineDecryptedUrlCache.set(clipId, url);
+    }
+
+    function updateTrackDownloadButtonUi(btnEl, clipId) {
+      btnEl.classList.remove('is-downloaded', 'is-downloading');
+      btnEl.disabled = false;
+      if (audioDownloadsInProgress.has(clipId)) {
+        btnEl.classList.add('is-downloading');
+        btnEl.textContent = '…';
+        btnEl.disabled = true;
+        btnEl.title = 'Downloading...';
+      } else if (isTrackDownloaded(clipId)) {
+        btnEl.classList.add('is-downloaded');
+        btnEl.textContent = '✅';
+        btnEl.title = 'Downloaded - tap to remove';
+      } else {
+        btnEl.textContent = '⬇️';
+        btnEl.title = 'Download for offline playback';
+      }
+    }
+
+    // Re-filters the visible queue against the current download state
+    // without disturbing playback - only used while the person is actively
+    // viewing the "Downloads" playlist, so a download/remove tap updates
+    // that list immediately instead of waiting for the next playlist switch.
+    function refreshQueueIfViewingDownloads() {
+      if (audioPlaylistSelect.value !== 'Downloads') return;
+      const activeTrack = currentAudioTrack();
+      audioQueueTracks = tracksForPlaylist('Downloads');
+      rebuildAudioPlayOrder();
+      if (activeTrack) {
+        const newQueueIndex = audioQueueTracks.indexOf(activeTrack);
+        audioQueuePosition = newQueueIndex !== -1 ? audioPlayOrder.indexOf(newQueueIndex) : -1;
+      } else {
+        audioQueuePosition = -1;
+      }
+      renderAudioQueue();
+    }
+
+    async function handleTrackDownloadButtonClick(track, btnEl) {
+      if (audioDownloadsInProgress.has(track.id)) return;
+
+      if (isTrackDownloaded(track.id)) {
+        await removeDownloadedTrack(track.id);
+        updateTrackDownloadButtonUi(btnEl, track.id);
+        refreshQueueIfViewingDownloads();
+        return;
+      }
+
+      updateTrackDownloadButtonUi(btnEl, track.id);
+      const ok = await downloadTrackForOffline(track, (pct) => {
+        if (btnEl.isConnected) btnEl.textContent = `${pct}%`;
+      });
+      if (ok) warmOfflineDecryptCache(track.id);
+      updateTrackDownloadButtonUi(btnEl, track.id);
+      if (ok) refreshQueueIfViewingDownloads();
+      if (!ok) {
+        btnEl.textContent = '⚠️';
+        setTimeout(() => updateTrackDownloadButtonUi(btnEl, track.id), 2000);
+      }
+    }
+
     let audioAllTracks = [];      // every track (with a usable audio URL) the current user can see, unfiltered
     let audioQueueTracks = [];    // tracks belonging to the currently selected playlist
     let audioPlayOrder = [];      // indices into audioQueueTracks, in current play order (identity or shuffled)
@@ -3512,6 +3793,17 @@ Ki a Te Moremore-o-te-rangi e!</p>
       }
       const nextTrack = audioQueueTracks[audioPlayOrder[nextOrderPos]];
       if (!nextTrack || !nextTrack.audioStreamUrl) return;
+
+      // Downloaded tracks get their decrypted Blob URL warmed into memory
+      // ahead of time instead of the network stream - this is what lets
+      // tapping Next on a downloaded track call .play() synchronously
+      // instead of needing an await mid-gesture, which strict autoplay
+      // policies (notably iOS Safari) can otherwise decline.
+      if (isTrackDownloaded(nextTrack.id)) {
+        warmOfflineDecryptCache(nextTrack.id);
+        return;
+      }
+
       if (audioPreloadEl.src !== nextTrack.audioStreamUrl) {
         audioPreloadEl.src = nextTrack.audioStreamUrl;
         audioPreloadEl.load();
@@ -3878,7 +4170,10 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
     function populateAudioPlaylistSelect() {
       const names = getUniquePlaylistNames(audioAllTracks);
-      const options = ['Waiata Katoa', ...names];
+      // "Downloads" is a virtual playlist (not a Column P tag) - always
+      // listed last, showing whatever is currently saved offline regardless
+      // of which real playlist(s) each track belongs to.
+      const options = ['Waiata Katoa', ...names, 'Downloads'];
       audioPlaylistSelect.innerHTML = options
         .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
         .join('');
@@ -3887,6 +4182,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
     function tracksForPlaylist(playlistName) {
       if (!playlistName || playlistName === 'Waiata Katoa') return audioAllTracks.slice();
+      if (playlistName === 'Downloads') return audioAllTracks.filter((t) => isTrackDownloaded(t.id));
       return audioAllTracks.filter((t) => (t.playlistTags || []).includes(playlistName));
     }
 
@@ -3907,9 +4203,29 @@ Ki a Te Moremore-o-te-rangi e!</p>
       return audioQueueTracks[audioPlayOrder[audioQueuePosition]] || null;
     }
 
-    function loadAudioTrackIntoPlayer(track, autoplay) {
+    async function loadAudioTrackIntoPlayer(track, autoplay) {
       if (!track) return;
-      audioPlayerElement.src = track.audioStreamUrl;
+
+      // Downloaded tracks: use the decrypted Blob URL if it's already
+      // warmed in memory (synchronous - preserves the gesture chain
+      // autoplay needs). If not yet warmed (first play of a track this
+      // session), decrypt now; on a strict autoplay policy the await below
+      // can occasionally cause .play() to be declined, same graceful
+      // fallback as the network-autoplay-failure case further down.
+      let playbackSrc = track.audioStreamUrl;
+      if (isTrackDownloaded(track.id)) {
+        let offlineUrl = offlineDecryptedUrlCache.get(track.id);
+        if (!offlineUrl) {
+          offlineUrl = await getPlayableOfflineUrl(track.id);
+          if (offlineUrl) offlineDecryptedUrlCache.set(track.id, offlineUrl);
+          // The queue could have advanced again while the await above was
+          // in flight (fast next/prev taps) - never stomp a newer load.
+          if (currentAudioTrack() !== track) return;
+        }
+        if (offlineUrl) playbackSrc = offlineUrl;
+      }
+
+      audioPlayerElement.src = playbackSrc;
       audioMediaTitle.textContent = track.name;
 
       // Column S (Audio Thumbnail) first, falling back to Column D (the
@@ -3965,7 +4281,9 @@ Ki a Te Moremore-o-te-rangi e!</p>
       if (audioQueueTracks.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'audio-queue-empty';
-        empty.textContent = 'No tracks with audio in this playlist yet.';
+        empty.textContent = audioPlaylistSelect.value === 'Downloads'
+          ? 'No downloaded tracks yet - tap the ⬇️ next to a track to save it for offline.'
+          : 'No tracks with audio in this playlist yet.';
         audioQueueEl.appendChild(empty);
         return;
       }
@@ -4018,6 +4336,16 @@ Ki a Te Moremore-o-te-rangi e!</p>
           toggleTrackFavorite(track.id);
         });
         actions.appendChild(heartBtn);
+
+        const trackDownloadBtn = document.createElement('button');
+        trackDownloadBtn.type = 'button';
+        trackDownloadBtn.className = 'audio-track-download-btn';
+        updateTrackDownloadButtonUi(trackDownloadBtn, track.id);
+        trackDownloadBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handleTrackDownloadButtonClick(track, trackDownloadBtn);
+        });
+        actions.appendChild(trackDownloadBtn);
 
         const menuBtn = document.createElement('button');
         menuBtn.type = 'button';
@@ -4079,7 +4407,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       updateAudioPlayPauseIcon();
     }
 
-    function openAudioPlayerScreen() {
+    async function openAudioPlayerScreen() {
       audioAllTracks = buildAudioAllTracks();
       populateAudioPlaylistSelect();
       audioIsShuffleOn = false;
@@ -4088,6 +4416,10 @@ Ki a Te Moremore-o-te-rangi e!</p>
       audioShuffleBtn.classList.remove('active');
       applyStaticControlIcons(); // sets Prev/Next/Shuffle + refreshes Play/Pause + Loop icons
       setupMediaSessionHandlersOnce();
+      // Read the downloaded-track list from IndexedDB before the queue
+      // renders, so download icons (and the Downloads playlist) are
+      // accurate on first paint instead of flashing to correct a moment later.
+      await refreshDownloadedTrackIdsCache();
       selectAudioPlaylist(audioPlaylistSelect.value);
       videoHubScreen.classList.remove('show');
       audioPlayerScreen.classList.add('show');
@@ -4537,6 +4869,12 @@ Ki a Te Moremore-o-te-rangi e!</p>
       audioPlayerElement.removeAttribute('src');
       audioPlayerScreen.classList.remove('show');
       closeAudioTrackMenu();
+
+      // Release every decrypted offline Blob URL held in memory - the
+      // underlying encrypted files stay in IndexedDB (downloads persist
+      // across sign-outs), only the in-memory decrypted copies are dropped.
+      offlineDecryptedUrlCache.forEach((url) => URL.revokeObjectURL(url));
+      offlineDecryptedUrlCache.clear();
 
       const passInput = document.getElementById('gatePass'); if (passInput) passInput.value = '';
       document.getElementById('passwordGate').style.display = 'flex';
