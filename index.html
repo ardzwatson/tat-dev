@@ -606,17 +606,18 @@
       }
     }
 
-     /* --- Mobile portrait only: relocate Playback Speed selector from the
-       top-right overlay down into the bottom control row, centered
-       horizontally between the Volume control (bottom-left) and the
-       Fullscreen toggle (bottom-right). */
+    /* --- Mobile portrait only: relocate Playback Speed selector from the
+       top-right overlay down into the bottom control row, nudged right of
+       true center to clear the Volume control's max-volume end (the volume
+       slider's width pushes its right edge further into the middle than the
+       Fullscreen toggle's fixed width does on the opposite side). */
     @media screen and (max-width: 768px) and (orientation: portrait) {
       .ref-speed-select {
         top: auto;
         left: 50%;
         right: auto;
         bottom: 12px;
-        transform: translateX(-50%);
+        transform: translateX(calc(-50% + 30px));
       }
     }
 
