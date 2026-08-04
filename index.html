@@ -670,9 +670,10 @@
       overflow: hidden;
     }
     
-    .label { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; letter-spacing: 0.5px; z-index: 10; pointer-events: none; display: flex; flex-direction: column; gap: 2px; }
-    #refLabel { background: rgba(46, 125, 50, 0.7); } 
-    #streamLabel { background: rgba(139, 0, 0, 0.7); } 
+.label { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; letter-spacing: 0.5px; z-index: 10; pointer-events: none; display: flex; flex-direction: column; gap: 2px; }
+#refLabel { background: rgba(46, 125, 50, 0.7); }
+#refLabel:empty { display: none; }
+#streamLabel { background: rgba(139, 0, 0, 0.7); }
     #streamLabel.review-active { background: rgba(0, 0, 0, 0.7) !important; } 
     
     .zoom-note { font-size: 8px; color: #aaa; font-weight: normal; }
@@ -2135,10 +2136,16 @@ Ki a Te Moremore-o-te-rangi e!</p>
       refFsProgressFill.style.width = `${pct}%`;
     }
 
-    videoBox.addEventListener('click', (e) => {
+     videoBox.addEventListener('click', (e) => {
       if (!isRefFullscreen()) return;
       if (e.target === refFsPlayPauseBtn || e.target === refFullscreenBtn) return;
       if (refFsProgressBar.contains(e.target)) return;
+      // Audio track pills and the speed selector also live inside videoBox -
+      // tapping them was bubbling up to this handler and toggling
+      // play/pause as an unwanted side effect, which is what made switching
+      // tracks in fullscreen look like it paused/required a second tap.
+      if (refAudioTrackBar.contains(e.target)) return;
+      if (refSpeedSelect.contains(e.target) || e.target === refSpeedSelect) return;
       if (refVideo.paused) refVideo.play().catch(() => {});
       else refVideo.pause();
       resetFsPlayPauseFadeTimer();
