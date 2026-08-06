@@ -5902,23 +5902,55 @@ Ki a Te Moremore-o-te-rangi e!</p>
       if (ffmpegLoadPromise) return ffmpegLoadPromise;
 
       ffmpegLoadPromise = (async () => {
-        if (!window.FFmpegWASM || !window.FFmpegUtil) {
-          throw new Error('Video converter failed to load. Check your connection and refresh.');
+        // Prefer modern API exposed by @ffmpeg/ffmpeg UMD: createFFmpeg + fetchFile
+        if (typeof window.createFFmpeg === 'function' && typeof window.fetchFile === 'function') {
+          const { createFFmpeg, fetchFile } = window;
+          const ffmpeg = createFFmpeg({ log: true });
+          await withTimeout(
+            ffmpeg.load(),
+            FFMPEG_LOAD_TIMEOUT_MS,
+            'Video converter took too long to load. Your connection may be too slow for on-device conversion.'
+          );
+          // attach fetchFile for use by conversion helpers
+          ffmpeg._fetchFile = fetchFile;
+          ffmpegInstance = ffmpeg;
+          return ffmpeg;
         }
-        const { FFmpeg } = FFmpegWASM;
-        const { toBlobURL } = FFmpegUtil;
-        const ffmpeg = new FFmpeg();
-        const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-        await withTimeout(
-          ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          }),
-          FFMPEG_LOAD_TIMEOUT_MS,
-          'Video converter took too long to load. Your connection may be too slow for on-device conversion.'
-        );
-        ffmpegInstance = ffmpeg;
-        return ffmpeg;
+
+        // Fallback for older utility + FFmpegWASM globals
+        if (window.FFmpegWASM && window.FFmpegUtil) {
+          const { FFmpeg } = FFmpegWASM;
+          const { toBlobURL } = FFmpegUtil;
+          const ffmpeg = new FFmpeg();
+          const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+          await withTimeout(
+            ffmpeg.load({
+              coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            }),
+            FFMPEG_LOAD_TIMEOUT_MS,
+            'Video converter took too long to load. Your connection may be too slow for on-device conversion.'
+          );
+          ffmpegInstance = ffmpeg;
+          return ffmpeg;
+        }
+
+        // Another fallback: some UMD bundles expose createFFmpeg under FFmpeg namespace
+        if (window.FFmpeg && typeof window.FFmpeg.createFFmpeg === 'function') {
+          const { createFFmpeg } = window.FFmpeg;
+          const fetchFile = window.FFmpeg.fetchFile || window.fetchFile;
+          const ffmpeg = createFFmpeg({ log: true });
+          await withTimeout(
+            ffmpeg.load(),
+            FFMPEG_LOAD_TIMEOUT_MS,
+            'Video converter took too long to load. Your connection may be too slow for on-device conversion.'
+          );
+          if (fetchFile) ffmpeg._fetchFile = fetchFile;
+          ffmpegInstance = ffmpeg;
+          return ffmpeg;
+        }
+
+        throw new Error('Video converter failed to load. Check your connection and refresh.');
       })();
 
       try {
@@ -5955,13 +5987,65 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
       detachFFmpegProgress(ffmpeg);
       let hasProgress = false;
-      ffmpegProgressHandler = ({ progress }) => {
-        hasProgress = true;
-        setConversionProgress(Math.round(Math.min(1, Math.max(0, progress)) * 100));
-      };
-      ffmpeg.on('progress', ffmpegProgressHandler);
+      // Prefer evented progress if available
+      if (typeof ffmpeg.on === 'function') {
+        ffmpegProgressHandler = ({ progress }) => {
+          hasProgress = true;
+          setConversionProgress(Math.round(Math.min(1, Math.max(0, progress)) * 100));
+        };
+        ffmpeg.on('progress', ffmpegProgressHandler);
+      }
 
       setConversionProgress(0);
+
+      // Modern createFFmpeg path (uses FS/run API)
+      if (typeof ffmpeg.FS === 'function' || typeof ffmpeg.FS === 'object') {
+        const fetchFile = ffmpeg._fetchFile || window.fetchFile || (async (f) => new Uint8Array(await f.arrayBuffer()));
+        // write input file
+        try {
+          ffmpeg.FS('writeFile', inputName, await fetchFile(blob));
+        } catch (e) {
+          // some createFFmpeg builds expose FS as a function, some as object api
+          if (ffmpeg.FS && typeof ffmpeg.FS.writeFile === 'function') {
+            ffmpeg.FS.writeFile(inputName, await fetchFile(blob));
+          } else {
+            // last-resort: fall back to blob->Uint8Array write
+            ffmpeg.FS('writeFile', inputName, new Uint8Array(await blob.arrayBuffer()));
+          }
+        }
+
+        await withTimeout(
+          ffmpeg.run(
+            '-i', inputName,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart',
+            outputName
+          ),
+          FFMPEG_CONVERT_TIMEOUT_MS,
+          'Conversion took too long on this device.'
+        );
+
+        // read output
+        let data;
+        try {
+          data = ffmpeg.FS('readFile', outputName);
+        } catch (e) {
+          if (ffmpeg.FS && typeof ffmpeg.FS.readFile === 'function') data = ffmpeg.FS.readFile(outputName);
+          else throw e;
+        }
+
+        // cleanup
+        try { ffmpeg.FS('unlink', inputName); } catch (_) {}
+        try { ffmpeg.FS('unlink', outputName); } catch (_) {}
+        detachFFmpegProgress(ffmpeg);
+
+        if (!hasProgress) setConversionProgress(100);
+        return new Blob([data.buffer || data], { type: 'video/mp4' });
+      }
+
+      // Fallback for older FFmpegWASM API (writeFile/exec/readFile)
+      // keep original behavior for compatibility
       await ffmpeg.writeFile(inputName, new Uint8Array(await blob.arrayBuffer()));
 
       await withTimeout(
@@ -6139,7 +6223,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
   <div id="pwaInstallModal" class="pwa-modal-overlay" style="display: none;">
     <div class="pwa-modal-card">
       <div class="pwa-modal-header">
-        <div class="pwa-modal-title">Install T ahuna Te Ahi! 🔥</div>
+        <div class="pwa-modal-title">Install Tahuna Te Ahi! 🔥</div>
         <button class="pwa-modal-close" onclick="closeInstallModal()">×</button>
       </div>
       <div class="pwa-tab-bar">
