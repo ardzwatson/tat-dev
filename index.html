@@ -5070,7 +5070,15 @@ Ki a Te Moremore-o-te-rangi e!</p>
       triviaRoundsAnswered++;
 
       if (isCorrect) {
-        const pointsEarned = Math.max(0, 1 - (triviaCurrentRound.hintsUsed * 0.25));
+        // Scoring differs by mode: default mode uses hint-deductions, Game Modes award 1 point per correct
+        const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+        let pointsEarned = 0;
+        if (mode === 'He Aha Te Waiata?') {
+          pointsEarned = Math.max(0, 1 - (triviaCurrentRound.hintsUsed * 0.25));
+        } else {
+          // Game mode: one point per correct answer
+          pointsEarned = 1;
+        }
         triviaTotalPointsEarned += pointsEarned;
         triviaFeedback.textContent = `✅ Correct! It was "${triviaCurrentRound.song.name}".`;
         triviaFeedback.className = 'trivia-feedback correct';
@@ -5090,43 +5098,51 @@ Ki a Te Moremore-o-te-rangi e!</p>
     triviaSubmitBtn.addEventListener('click', handleTriviaSubmit);
 
     function openTriviaScreen() {
-      triviaEligibleSongs = buildTriviaEligibleSongs();
-      // Score resets each time the Trivia screen is opened fresh, same as
-      // Audio Player's repeat/shuffle state reset in openAudioPlayerScreen().
-      triviaTotalPointsEarned = 0;
-      triviaRoundsAnswered = 0;
-      // reset display elements
-      updateTriviaScoreDisplay();
-      // initialize current points to default (1)
-      if (triviaCurrentPoints) triviaCurrentPoints.textContent = `Points if correct: 1`;
-
-      // load stored highest score for this passcode (if any)
       try {
-        const key = `triviaHighestScore_${currentPasscode || 'anon'}`;
-        const stored = parseFloat(localStorage.getItem(key) || '0') || 0;
-        if (triviaHighestScore) triviaHighestScore.textContent = `Highest Score: ${formatTriviaScoreNumber(stored)}`;
-      } catch (e) { /* ignore */ }
+        console.info('openTriviaScreen called');
+        triviaEligibleSongs = buildTriviaEligibleSongs();
+        // Score resets each time the Trivia screen is opened fresh, same as
+        // Audio Player's repeat/shuffle state reset in openAudioPlayerScreen().
+        triviaTotalPointsEarned = 0;
+        triviaRoundsAnswered = 0;
+        // reset display elements
+        updateTriviaScoreDisplay();
+        // initialize current points to default (1)
+        if (triviaCurrentPoints) triviaCurrentPoints.textContent = `Points if correct: 1`;
 
-      // Compute playable rounds (songs that have lyrics)
-      const roundsPool = (triviaEligibleSongs || []).filter(s => Array.isArray(s.lyrics) && s.lyrics.length > 0);
-      // Always show the game area so users can select a waiata from the list.
-      triviaGameArea.style.display = 'block';
-      // If there are no playable songs, show the empty-state note but keep
-      // the input/dropdown available so users can pick a title or change it.
-      if (roundsPool.length === 0) {
-        triviaEmptyState.style.display = 'block';
-        // no playable rounds - disable submit
-        triviaSubmitBtn.disabled = true;
-        triviaLyricLine.textContent = 'No lyrics available. Select a waiata from the list.';
-      } else {
-        triviaEmptyState.style.display = 'none';
-        triviaSubmitBtn.disabled = false;
-        startNewTriviaRound();
+        // load stored highest score for this passcode (if any)
+        try {
+          const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+          const key = `triviaHighestScore_${mode}_${currentPasscode || 'anon'}`;
+          const stored = parseFloat(localStorage.getItem(key) || '0') || 0;
+          if (triviaHighestScore) triviaHighestScore.textContent = `Highest Score: ${formatTriviaScoreNumber(stored)}`;
+        } catch (e) { console.warn('highest score read failed', e); }
+
+        // Compute playable rounds (songs that have lyrics)
+        const roundsPool = (triviaEligibleSongs || []).filter(s => Array.isArray(s.lyrics) && s.lyrics.length > 0);
+        // Always show the game area so users can select a waiata from the list.
+        if (triviaGameArea) triviaGameArea.style.display = 'block';
+        // If there are no playable songs, show the empty-state note but keep
+        // the input/dropdown available so users can pick a title or change it.
+        if (roundsPool.length === 0) {
+          if (triviaEmptyState) triviaEmptyState.style.display = 'block';
+          // no playable rounds - disable submit
+          if (triviaSubmitBtn) triviaSubmitBtn.disabled = true;
+          if (triviaLyricLine) triviaLyricLine.textContent = 'No lyrics available. Select a waiata from the list.';
+        } else {
+          if (triviaEmptyState) triviaEmptyState.style.display = 'none';
+          if (triviaSubmitBtn) triviaSubmitBtn.disabled = false;
+          startNewTriviaRound();
+        }
+
+        if (videoHubScreen) videoHubScreen.classList.remove('show');
+        if (triviaScreen) triviaScreen.classList.add('show');
+        updateInstallButtonVisibility();
+      } catch (err) {
+        console.error('openTriviaScreen error', err);
+        // Best-effort: still attempt to reveal the screen
+        try { triviaScreen && triviaScreen.classList.add('show'); } catch (e) {}
       }
-
-      videoHubScreen.classList.remove('show');
-      triviaScreen.classList.add('show');
-      updateInstallButtonVisibility();
     }
 
     function closeTriviaScreen() {
