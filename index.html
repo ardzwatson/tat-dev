@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Tahuna Te Ahi! 🔥 (32.0)</title>
+  <title>Tahuna Te Ahi! 🔥 (32.2)</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#121212">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1463,9 +1463,12 @@
       margin: 0 auto;
       display: block;
       width: 100%;
+      font-style: italic;
+      opacity: 0.6; /* hint CTA dim until used */
+      transition: opacity 0.18s ease;
     }
     .trivia-hint-btn .trivia-hint-cost { font-size: 17px; display: block; }
-    .trivia-hint-btn:disabled { cursor: default; opacity: 0.5; }
+    .trivia-hint-btn:disabled { cursor: default; opacity: 0.4; }
     .trivia-hint-before { color: #3396ff; }
     .trivia-hint-after { color: #FF9500; }
 
@@ -1475,9 +1478,27 @@
       font-style: italic;
       padding: 4px 10px;
       line-height: 1.4;
+      opacity: 1;
+      transition: opacity 0.18s ease;
     }
     .trivia-hint-before-revealed { color: #7ab8ff; }
     .trivia-hint-after-revealed { color: #ffb84d; }
+
+    .trivia-current-points {
+      margin-top: 10px;
+      font-family: 'Marcellus', serif;
+      font-size: 15px;
+      color: #5ed17d; /* green like Tahuna button */
+      opacity: 0.8;
+    }
+
+    .trivia-highest-score {
+      margin-top: 6px;
+      font-family: 'Marcellus', serif;
+      font-size: 60%; /* 60% of score text */
+      color: #ffd700; /* gold */
+      opacity: 1;
+    }
 
     .trivia-lyric-line {
       font-family: 'Marcellus', serif;
@@ -1636,7 +1657,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">32.0 Build</div>
+      <div class="gate-build-tag">32.2 Build</div>
     </div>
   </div>
 
@@ -1725,14 +1746,16 @@ Ki a Te Moremore-o-te-rangi e!</p>
           <button type="button" id="triviaHintAfterBtn" class="trivia-hint-btn trivia-hint-after">Click for Hint<span class="trivia-hint-cost">-0.25</span></button>
 
           <div class="trivia-answer-wrap">
-            <input type="text" id="triviaAnswerInput" class="trivia-answer-input" placeholder="List of song titles from Column B" autocomplete="off">
+            <input type="text" id="triviaAnswerInput" class="trivia-answer-input" placeholder="Te Waiata" autocomplete="off">
             <div id="triviaAnswerDropdown" class="trivia-answer-dropdown"></div>
           </div>
 
           <button type="button" id="triviaSubmitBtn" class="trivia-submit-btn">Tahuna Te Ahi</button>
 
           <div id="triviaFeedback" class="trivia-feedback"></div>
+          <div id="triviaCurrentPoints" class="trivia-current-points">Points if correct: 1</div>
           <div id="triviaScoreDisplay" class="trivia-score">Score: 0 / 0</div>
+          <div id="triviaHighestScore" class="trivia-highest-score">Highest Score: 0</div>
         </div>
       </div>
     </div>
@@ -1845,7 +1868,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">32.0</div>
+      <div class="version-tag">32.2</div>
     </div>
   </div>
 
@@ -2074,7 +2097,9 @@ Ki a Te Moremore-o-te-rangi e!</p>
     const triviaAnswerDropdown = document.getElementById('triviaAnswerDropdown');
     const triviaSubmitBtn = document.getElementById('triviaSubmitBtn');
     const triviaFeedback = document.getElementById('triviaFeedback');
+    const triviaCurrentPoints = document.getElementById('triviaCurrentPoints');
     const triviaScoreDisplay = document.getElementById('triviaScoreDisplay');
+    const triviaHighestScore = document.getElementById('triviaHighestScore');
 
     const viewfinder = document.getElementById('viewfinder');
     const reviewPlayer = document.getElementById('reviewPlayer');
@@ -4647,16 +4672,21 @@ Ki a Te Moremore-o-te-rangi e!</p>
     let triviaRoundsAnswered = 0;
 
     function buildTriviaEligibleSongs() {
-      const userRecord = userDatabase[currentPasscode] || { assignedClips: [], assignedClipsAll: false };
-      const cards = buildClipCards(userRecord);
+      // Show all titles from the Video Library (Column B) unless the clip has
+      // excludeFromTrivia (Column U) set. Deduplicate by title.
       const seenNames = new Set();
       const eligible = [];
-      cards.forEach((c) => {
-        if (c.excludeFromTrivia) return;
-        if (!Array.isArray(c.lyrics) || c.lyrics.length === 0) return;
-        if (seenNames.has(c.name)) return; // avoid duplicate titles in the dropdown/pool
-        seenNames.add(c.name);
-        eligible.push({ name: c.name, lyrics: c.lyrics });
+      Object.keys(clipLibrary || {}).forEach((id) => {
+        const clip = clipLibrary[id];
+        if (!clip) return;
+        if (clip.excludeFromTrivia) return; // Column U excludes this title
+        const name = clip.name || '';
+        if (!name) return;
+        const lyrics = Array.isArray(clip.lyrics) ? clip.lyrics : [];
+        if (lyrics.length === 0) return; // need lyrics to play trivia
+        if (seenNames.has(name)) return;
+        seenNames.add(name);
+        eligible.push({ name: name, lyrics: lyrics });
       });
       return eligible;
     }
@@ -4670,8 +4700,34 @@ Ki a Te Moremore-o-te-rangi e!</p>
       return rounded.toFixed(2).replace(/0$/, '').replace(/\.$/, '');
     }
 
+    // Update the current points available display (1.00 - hint deductions)
+    function updateTriviaCurrentPoints() {
+      try {
+        const hints = triviaCurrentRound ? (triviaCurrentRound.hintsUsed || 0) : 0;
+        const points = Math.max(0, 1 - (hints * 0.25));
+        if (triviaCurrentPoints) triviaCurrentPoints.textContent = `Points if correct: ${formatTriviaScoreNumber(points)}`;
+      } catch (e) { /* ignore */ }
+    }
+
     function updateTriviaScoreDisplay() {
+      // Update main score display
       triviaScoreDisplay.textContent = `Score: ${formatTriviaScoreNumber(triviaTotalPointsEarned)} / ${triviaRoundsAnswered}`;
+      // Update highest score (persisted per passcode)
+      try {
+        const key = `triviaHighestScore_${currentPasscode || 'anon'}`;
+        const stored = parseFloat(localStorage.getItem(key) || '0') || 0;
+        if (triviaTotalPointsEarned > stored) {
+          localStorage.setItem(key, String(triviaTotalPointsEarned));
+          triviaHighestScore.textContent = `Highest Score: ${formatTriviaScoreNumber(triviaTotalPointsEarned)}`;
+        } else {
+          triviaHighestScore.textContent = `Highest Score: ${formatTriviaScoreNumber(stored)}`;
+        }
+      } catch (e) {
+        // ignore storage failures
+        triviaHighestScore.textContent = `Highest Score: 0`;
+      }
+      // Update current points available (shown above the score)
+      updateTriviaCurrentPoints();
     }
 
     function pickRandomTriviaRound() {
@@ -4686,28 +4742,38 @@ Ki a Te Moremore-o-te-rangi e!</p>
     // both buttons are disabled once the round has been answered.
     function renderTriviaHintButtons() {
       const round = triviaCurrentRound;
+      if (!round) return;
       const isFirstLine = round.lineIndex <= 0;
       const isLastLine = round.lineIndex >= round.song.lyrics.length - 1;
 
+      // BEFORE hint
       if (round.hintBeforeUsed) {
         triviaHintBeforeBtn.style.display = 'none';
         triviaHintBeforeText.style.display = 'block';
+        triviaHintBeforeText.style.opacity = '1';
         triviaHintBeforeText.textContent = isFirstLine ? 'First line of song' : round.song.lyrics[round.lineIndex - 1];
       } else {
         triviaHintBeforeBtn.style.display = 'block';
         triviaHintBeforeText.style.display = 'none';
         triviaHintBeforeBtn.disabled = round.answered;
+        triviaHintBeforeBtn.style.opacity = round.answered ? '0.4' : '0.6';
       }
 
+      // AFTER hint
       if (round.hintAfterUsed) {
         triviaHintAfterBtn.style.display = 'none';
         triviaHintAfterText.style.display = 'block';
+        triviaHintAfterText.style.opacity = '1';
         triviaHintAfterText.textContent = isLastLine ? 'Last line of song' : round.song.lyrics[round.lineIndex + 1];
       } else {
         triviaHintAfterBtn.style.display = 'block';
         triviaHintAfterText.style.display = 'none';
         triviaHintAfterBtn.disabled = round.answered;
+        triviaHintAfterBtn.style.opacity = round.answered ? '0.4' : '0.6';
       }
+
+      // Update the displayed points available based on hints used
+      updateTriviaCurrentPoints();
     }
 
     function hideTriviaAnswerDropdown() {
@@ -4837,7 +4903,17 @@ Ki a Te Moremore-o-te-rangi e!</p>
       // Audio Player's repeat/shuffle state reset in openAudioPlayerScreen().
       triviaTotalPointsEarned = 0;
       triviaRoundsAnswered = 0;
+      // reset display elements
       updateTriviaScoreDisplay();
+      // initialize current points to default (1)
+      if (triviaCurrentPoints) triviaCurrentPoints.textContent = `Points if correct: 1`;
+
+      // load stored highest score for this passcode (if any)
+      try {
+        const key = `triviaHighestScore_${currentPasscode || 'anon'}`;
+        const stored = parseFloat(localStorage.getItem(key) || '0') || 0;
+        if (triviaHighestScore) triviaHighestScore.textContent = `Highest Score: ${formatTriviaScoreNumber(stored)}`;
+      } catch (e) { /* ignore */ }
 
       if (triviaEligibleSongs.length === 0) {
         triviaGameArea.style.display = 'none';
