@@ -4733,7 +4733,11 @@ Ki a Te Moremore-o-te-rangi e!</p>
     }
 
     function pickRandomTriviaRound() {
-      const song = triviaEligibleSongs[Math.floor(Math.random() * triviaEligibleSongs.length)];
+      // Only pick from songs that have lyrics available. The dropdown still
+      // shows titles without lyrics, but rounds need lyric lines to quiz on.
+      const pool = triviaEligibleSongs.filter(s => Array.isArray(s.lyrics) && s.lyrics.length > 0);
+      if (!pool || pool.length === 0) return null;
+      const song = pool[Math.floor(Math.random() * pool.length)];
       const lineIndex = Math.floor(Math.random() * song.lyrics.length);
       return { song, lineIndex, hintsUsed: 0, hintBeforeUsed: false, hintAfterUsed: false, answered: false };
     }
@@ -4825,8 +4829,21 @@ Ki a Te Moremore-o-te-rangi e!</p>
     });
 
     function startNewTriviaRound() {
-      if (triviaEligibleSongs.length === 0) return;
+      // Ensure we have at least one song with lyrics to pick from.
+      const roundsPool = triviaEligibleSongs.filter(s => Array.isArray(s.lyrics) && s.lyrics.length > 0);
+      if (roundsPool.length === 0) {
+        // No playable rounds even if titles exist - show empty state
+        triviaGameArea.style.display = 'none';
+        triviaEmptyState.style.display = 'block';
+        return;
+      }
+
       triviaCurrentRound = pickRandomTriviaRound();
+      if (!triviaCurrentRound) {
+        triviaGameArea.style.display = 'none';
+        triviaEmptyState.style.display = 'block';
+        return;
+      }
       triviaLyricLine.textContent = triviaCurrentRound.song.lyrics[triviaCurrentRound.lineIndex];
       renderTriviaHintButtons();
 
@@ -4917,7 +4934,9 @@ Ki a Te Moremore-o-te-rangi e!</p>
         if (triviaHighestScore) triviaHighestScore.textContent = `Highest Score: ${formatTriviaScoreNumber(stored)}`;
       } catch (e) { /* ignore */ }
 
-      if (triviaEligibleSongs.length === 0) {
+      // Show the game area only if there is at least one song with lyrics
+      const roundsPool = (triviaEligibleSongs || []).filter(s => Array.isArray(s.lyrics) && s.lyrics.length > 0);
+      if (roundsPool.length === 0) {
         triviaGameArea.style.display = 'none';
         triviaEmptyState.style.display = 'block';
       } else {
