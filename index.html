@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Tahuna Te Ahi! 🔥 (32.5)</title>
+  <title>Tahuna Te Ahi! 🔥 (32.6)</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#121212">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1658,7 +1658,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">32.4 Build</div>
+      <div class="gate-build-tag">32.6 Build</div>
     </div>
   </div>
 
@@ -1748,7 +1748,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
           <div id="triviaLyricLine" class="trivia-lyric-line">Loading...</div>
  
           <div id="triviaHintAfterText" class="trivia-hint-revealed trivia-hint-after-revealed" style="display:none;"></div>
-          <button type="button" id="triviaHintAfterBtn" class="trivia-hint-btn trivia-hint-after"><span class="trivia-hint-cost">-0.25</span></button>
+          <button type="button" id="triviaHintAfterBtn" class="trivia-hint-btn trivia-hint-after">Click for Hint<span class="trivia-hint-cost">-0.25</span></button>
           <div id="triviaTimer" class="trivia-timer">00:00</div>
           <audio id="gameModeAudio" preload="auto" crossorigin="anonymous" style="display:none"></audio>
 
@@ -1759,8 +1759,8 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
           <button type="button" id="triviaSubmitBtn" class="trivia-submit-btn">Tahuna Te Ahi</button>
 
-          <div id="triviaCurrentPoints" class="trivia-current-points">P</div>
-          <div id="triviaScoreDisplay" class="trivia-score">Score: 0</div>
+          <div id="triviaCurrentPoints" class="trivia-current-points">Points if correct: 1</div>
+          <div id="triviaScoreDisplay" class="trivia-score">Score: 0 / 0</div>
           <div id="triviaHighestScore" class="trivia-highest-score">Highest Score: 0</div>
 
           <div id="triviaFeedback" class="trivia-feedback"></div>
@@ -1876,7 +1876,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">32.4</div>
+      <div class="version-tag">32.6</div>
     </div>
   </div>
 
@@ -4774,11 +4774,19 @@ Ki a Te Moremore-o-te-rangi e!</p>
     }
 
     function updateTriviaScoreDisplay() {
-      // Update main score display
-      triviaScoreDisplay.textContent = `Score: ${formatTriviaScoreNumber(triviaTotalPointsEarned)} / ${triviaRoundsAnswered}`;
+      // Update main score display - timed Game Modes score a flat 1 point
+      // per correct answer (no hint deductions apply there), so
+      // triviaTotalPointsEarned already IS the correct-answer count. Show
+      // it plainly rather than the hint-aware "X / Y" format the default
+      // lyric mode uses, since "Y" (rounds answered) isn't a meaningful
+      // stat for a timed mode.
+      const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+      const isTimedGameMode = mode !== 'He Aha Te Waiata?';
+      triviaScoreDisplay.textContent = isTimedGameMode
+        ? `Score: ${formatTriviaScoreNumber(triviaTotalPointsEarned)}`
+        : `Score: ${formatTriviaScoreNumber(triviaTotalPointsEarned)} / ${triviaRoundsAnswered}`;
       // Update highest score (persisted per passcode and per mode)
       try {
-        const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
         const key = `triviaHighestScore_${mode}_${currentPasscode || 'anon'}`;
         const stored = parseFloat(localStorage.getItem(key) || '0') || 0;
         if (triviaTotalPointsEarned > stored) {
@@ -4948,16 +4956,28 @@ Ki a Te Moremore-o-te-rangi e!</p>
         }
 
         // Update points
+        if (triviaCurrentPoints) triviaCurrentPoints.style.display = 'block';
         updateTriviaCurrentPoints();
         return;
       }
 
-      // Game mode UI: BEFORE button is Begin/Stop, AFTER area shows timer
+      // Game mode UI: BEFORE button is Begin/Stop, AFTER area shows timer.
+      // Hints and the "points if correct" preview don't apply to timed
+      // Game Modes (scoring there is a flat 1 point per correct guess with
+      // no hint mechanic at all) - hide all of that hint apparatus here
+      // rather than leave it showing stale state from the last
+      // default-mode round.
       triviaHintBeforeBtn.style.display = 'block';
       triviaHintBeforeBtn.disabled = false;
       triviaHintBeforeBtn.textContent = gameRunning ? 'Stop' : 'Begin!';
       triviaHintBeforeBtn.style.background = gameRunning ? 'linear-gradient(135deg,#ff4d4d,#b30000)' : 'linear-gradient(135deg,#ffd700,#ffb84d)';
       triviaHintBeforeBtn.style.color = gameRunning ? '#111' : '#111';
+      triviaHintBeforeText.style.display = 'none';
+
+      triviaHintAfterBtn.style.display = 'none';
+      triviaHintAfterText.style.display = 'none';
+
+      if (triviaCurrentPoints) triviaCurrentPoints.style.display = 'none';
 
       // Timer area
       triviaTimer.style.display = 'block';
