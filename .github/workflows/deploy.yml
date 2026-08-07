@@ -15,7 +15,7 @@ jobs:
       - name: Deploy via FTPS to Bunny.net
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-                    server: ://bunnycdn.com
+        server: ://bunnycdn.com
           username: ${{ secrets.BUNNY_STORAGE_ZONE }}
           password: ${{ secrets.BUNNY_API_KEY }}
           protocol: ftps
