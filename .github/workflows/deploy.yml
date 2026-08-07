@@ -12,10 +12,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy via FTP to Bunny.net
+      - name: Deploy via FTPS to Bunny.net
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: bunnycdn.com
           username: ${{ secrets.BUNNY_STORAGE_ZONE }}
           password: ${{ secrets.BUNNY_API_KEY }}
+          protocol: ftps
+          port: 2121
           local-dir: ./
