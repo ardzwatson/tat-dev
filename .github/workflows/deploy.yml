@@ -3,7 +3,7 @@ name: Deploy PWA to Bunny.net
 on:
   push:
     branches:
-      - main  # Automatically triggers every time you save changes to your repo
+      - main
 
 jobs:
   deploy:
