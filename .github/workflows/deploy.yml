@@ -1,0 +1,27 @@
+name: Deploy PWA to Bunny.net
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Upload PWA via Bunny Storage API
+        run: |
+          curl -v -w "\nHTTP Status: %{http_code}\n" -X PUT "https://bunnycdn.com" \
+               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+               -T "./index.html"
+          
+          curl -v -w "\nHTTP Status: %{http_code}\n" -X PUT "https://bunnycdn.com" \
+               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+               -T "./manifest.json"
+          
+          curl -X PUT "https://bunnycdn.com" \
+               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+               -T "./service-worker.js"
