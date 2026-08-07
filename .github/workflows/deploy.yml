@@ -4,24 +4,28 @@ on:
   push:
     branches:
       - main
+      - master
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      BUNNY_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
+      BUNNY_KEY: ${{ secrets.BUNNY_API_KEY }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Upload PWA via Bunny Storage API
         run: |
-          curl -X PUT "https://bunnycdn.com{{ secrets.BUNNY_STORAGE_ZONE }}/index.html" \
-               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+          curl -X PUT "https://bunnycdn.com" \
+               -H "AccessKey: $BUNNY_KEY" \
                -T "./index.html"
           
-          curl -X PUT "https://bunnycdn.com{{ secrets.BUNNY_STORAGE_ZONE }}/manifest.json" \
-               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+          curl -X PUT "https://bunnycdn.com" \
+               -H "AccessKey: $BUNNY_KEY" \
                -T "./manifest.json"
           
-          curl -X PUT "https://bunnycdn.com{{ secrets.BUNNY_STORAGE_ZONE }}/service-worker.js" \
-               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+          curl -X PUT "https://bunnycdn.com" \
+               -H "AccessKey: $BUNNY_KEY" \
                -T "./service-worker.js"
