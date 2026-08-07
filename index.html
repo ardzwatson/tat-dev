@@ -4685,7 +4685,8 @@ Ki a Te Moremore-o-te-rangi e!</p>
         const name = clip.name || '';
         if (!name) return;
         const lyrics = Array.isArray(clip.lyrics) ? clip.lyrics : [];
-        if (lyrics.length === 0) return; // need lyrics to play trivia
+        // Include titles even when lyrics are missing; rounds will only pick
+        // from songs that have lyrics when a playable round is started.
         if (seenNames.has(name)) return;
         seenNames.add(name);
         eligible.push({ name: name, lyrics: lyrics });
@@ -4822,6 +4823,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
     triviaAnswerInput.addEventListener('input', renderTriviaAnswerDropdown);
     triviaAnswerInput.addEventListener('focus', renderTriviaAnswerDropdown);
+    triviaAnswerInput.addEventListener('click', renderTriviaAnswerDropdown);
     triviaAnswerInput.addEventListener('blur', () => {
       // Small delay so a mousedown-selected option (see above) has already
       // registered before the dropdown disappears.
@@ -4934,14 +4936,20 @@ Ki a Te Moremore-o-te-rangi e!</p>
         if (triviaHighestScore) triviaHighestScore.textContent = `Highest Score: ${formatTriviaScoreNumber(stored)}`;
       } catch (e) { /* ignore */ }
 
-      // Show the game area only if there is at least one song with lyrics
+      // Compute playable rounds (songs that have lyrics)
       const roundsPool = (triviaEligibleSongs || []).filter(s => Array.isArray(s.lyrics) && s.lyrics.length > 0);
+      // Always show the game area so users can select a waiata from the list.
+      triviaGameArea.style.display = 'block';
+      // If there are no playable songs, show the empty-state note but keep
+      // the input/dropdown available so users can pick a title or change it.
       if (roundsPool.length === 0) {
-        triviaGameArea.style.display = 'none';
         triviaEmptyState.style.display = 'block';
+        // no playable rounds - disable submit
+        triviaSubmitBtn.disabled = true;
+        triviaLyricLine.textContent = 'No lyrics available. Select a waiata from the list.';
       } else {
-        triviaGameArea.style.display = 'block';
         triviaEmptyState.style.display = 'none';
+        triviaSubmitBtn.disabled = false;
         startNewTriviaRound();
       }
 
