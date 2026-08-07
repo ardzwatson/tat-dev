@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Tahuna Te Ahi! 🔥 (32.2)</title>
+  <title>Tahuna Te Ahi! 🔥 (32.3)</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#121212">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1742,12 +1742,13 @@ Ki a Te Moremore-o-te-rangi e!</p>
         <div id="triviaEmptyState" class="trivia-empty-state" style="display:none;">No trivia songs available yet - lyrics haven't been added for your assigned waiata.</div>
 
         <div id="triviaGameArea">
-          <button type="button" id="triviaHintBeforeBtn" class="trivia-hint-btn trivia-hint-before" data-role="begin">Begin!</button>
+          <button type="button" id="triviaHintBeforeBtn" class="trivia-hint-btn trivia-hint-before">Click for Hint<span class="trivia-hint-cost">-0.25</span></button>
           <div id="triviaHintBeforeText" class="trivia-hint-revealed trivia-hint-before-revealed" style="display:none;"></div>
  
           <div id="triviaLyricLine" class="trivia-lyric-line">Loading...</div>
  
           <div id="triviaHintAfterText" class="trivia-hint-revealed trivia-hint-after-revealed" style="display:none;"></div>
+          <button type="button" id="triviaHintAfterBtn" class="trivia-hint-btn trivia-hint-after">Click for Hint<span class="trivia-hint-cost">-0.25</span></button>
           <div id="triviaTimer" class="trivia-timer">00:00</div>
           <audio id="gameModeAudio" preload="auto" crossorigin="anonymous" style="display:none"></audio>
 
@@ -4829,6 +4830,25 @@ Ki a Te Moremore-o-te-rangi e!</p>
       // start playback and timer; if no audio provided, fallback to 30s
       try {
         gameRunning = true;
+
+        // Pick a fresh line to guess now that the round is actually
+        // starting - the countdown before this point only ever displayed
+        // "Starting in N..."; nothing had chosen an actual lyric to guess
+        // yet, which is why the screen stayed stuck on that countdown text
+        // once gameplay began.
+        if (triviaEligibleSongs.length > 0) {
+          triviaCurrentRound = pickRandomTriviaRound();
+          triviaLyricLine.textContent = triviaCurrentRound.song.lyrics[triviaCurrentRound.lineIndex];
+          triviaAnswerInput.value = '';
+          triviaAnswerInput.disabled = false;
+          hideTriviaAnswerDropdown();
+          triviaFeedback.textContent = '';
+          triviaFeedback.className = 'trivia-feedback';
+          triviaSubmitBtn.textContent = 'Tahuna Te Ahi';
+          triviaSubmitBtn.classList.remove('trivia-next-mode');
+          triviaSubmitBtn.disabled = false;
+        }
+
         renderTriviaHintButtons();
         // attach HLS if needed
         if (Hls && Hls.isSupported() && audioUrl) {
@@ -4907,6 +4927,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
           triviaHintBeforeText.textContent = isFirstLine ? 'First line of song' : round.song.lyrics[round.lineIndex - 1];
         } else {
           triviaHintBeforeBtn.style.display = 'block';
+          triviaHintBeforeBtn.innerHTML = 'Click for Hint<span class="trivia-hint-cost">-0.25</span>';
           triviaHintBeforeText.style.display = 'none';
           triviaHintBeforeBtn.disabled = round.answered;
           triviaHintBeforeBtn.style.opacity = round.answered ? '0.4' : '0.6';
@@ -4920,6 +4941,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
           triviaHintAfterText.textContent = isLastLine ? 'Last line of song' : round.song.lyrics[round.lineIndex + 1];
         } else {
           triviaHintAfterBtn.style.display = 'block';
+          triviaHintAfterBtn.innerHTML = 'Click for Hint<span class="trivia-hint-cost">-0.25</span>';
           triviaHintAfterText.style.display = 'none';
           triviaHintAfterBtn.disabled = round.answered;
           triviaHintAfterBtn.style.opacity = round.answered ? '0.4' : '0.6';
@@ -5097,7 +5119,45 @@ Ki a Te Moremore-o-te-rangi e!</p>
     }
     triviaSubmitBtn.addEventListener('click', handleTriviaSubmit);
 
+    // Switching Game Mode mid-round abandons whatever was in progress
+    // (stops any playing audio/timer via stopGameMode()) and resets
+    // straight to the newly selected mode's own default/idle state,
+    // instead of leaving a stale timer, playing audio, or a
+    // half-answered round hanging around under the new mode.
+    triviaGameModeSelect.addEventListener('change', () => {
+      stopGameMode();
+      triviaCurrentRound = null;
+
+      if (triviaGameModeSelect.value === 'He Aha Te Waiata?') {
+        if (triviaEligibleSongs.length > 0) {
+          startNewTriviaRound();
+        } else {
+          triviaLyricLine.textContent = 'No lyrics available. Select a waiata from the list.';
+        }
+      } else {
+        triviaAnswerInput.value = '';
+        triviaAnswerInput.disabled = false;
+        hideTriviaAnswerDropdown();
+        triviaFeedback.textContent = '';
+        triviaFeedback.className = 'trivia-feedback';
+        triviaSubmitBtn.textContent = 'Tahuna Te Ahi';
+        triviaSubmitBtn.classList.remove('trivia-next-mode');
+      }
+    });
+
     function openTriviaScreen() {
+      // Perform the screen swap FIRST, before any round/score setup below -
+      // that setup can throw (e.g. stale state left over from a previously
+      // selected Game Mode), and when it did, the old catch block only ever
+      // revealed triviaScreen without ever hiding videoHubScreen. Since the
+      // hub's z-index sits above the trivia screen's, the hub kept
+      // rendering on top until something else happened to succeed through
+      // this same path - which is exactly what looked like "Te Ahi Kā
+      // stays on top until you click something."
+      if (videoHubScreen) videoHubScreen.classList.remove('show');
+      if (triviaScreen) triviaScreen.classList.add('show');
+      updateInstallButtonVisibility();
+
       try {
         console.info('openTriviaScreen called');
         triviaEligibleSongs = buildTriviaEligibleSongs();
@@ -5134,14 +5194,8 @@ Ki a Te Moremore-o-te-rangi e!</p>
           if (triviaSubmitBtn) triviaSubmitBtn.disabled = false;
           startNewTriviaRound();
         }
-
-        if (videoHubScreen) videoHubScreen.classList.remove('show');
-        if (triviaScreen) triviaScreen.classList.add('show');
-        updateInstallButtonVisibility();
       } catch (err) {
         console.error('openTriviaScreen error', err);
-        // Best-effort: still attempt to reveal the screen
-        try { triviaScreen && triviaScreen.classList.add('show'); } catch (e) {}
       }
     }
 
