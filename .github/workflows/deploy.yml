@@ -3,7 +3,7 @@ name: Deploy PWA to Bunny.net
 on:
   push:
     branches:
-      - main  # Runs automatically every time a change is saved online
+      - main
 
 jobs:
   deploy:
@@ -12,9 +12,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy to Bunny.net Storage
-        uses: bunnycloud/storage-deploy-action@v1
+      - name: Deploy via FTP to Bunny.net
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          source: './'  # Uploads your index.html, manifest, and service worker from this repo
-          storageZone: ${{ secrets.BUNNY_STORAGE_ZONE }}
-          accessKey: ${{ secrets.BUNNY_API_KEY }}
+          server: ://bunnycdn.com
+          username: ${{ secrets.BUNNY_STORAGE_ZONE }}
+          password: ${{ secrets.BUNNY_API_KEY }}
+          local-dir: ./
