@@ -12,12 +12,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy via FTPS to Bunny.net
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: syd-storage.bunnycdn.com
-          username: ${{ secrets.BUNNY_STORAGE_ZONE }}
-          password: ${{ secrets.BUNNY_API_KEY }}
-          protocol: ftps
-          port: 2121
-          local-dir: ./
+      - name: Upload PWA to Bunny Storage API
+        run: |
+          curl -X PUT "https://bunnycdn.com{{ secrets.BUNNY_STORAGE_ZONE }}/index.html" \
+               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+               -T "./index.html"
+          
+          curl -X PUT "https://bunnycdn.com{{ secrets.BUNNY_STORAGE_ZONE }}/manifest.json" \
+               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+               -T "./manifest.json"
+          
+          curl -X PUT "https://bunnycdn.com{{ secrets.BUNNY_STORAGE_ZONE }}/service-worker.js" \
+               -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
+               -T "./service-worker.js"
