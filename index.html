@@ -1487,7 +1487,8 @@
     .trivia-current-points {
       margin-top: 10px;
       font-family: 'Marcellus', serif;
-      font-size: 15px;
+      /* 90% of trivia-score (17px * 0.9 ~= 15.3px) */
+      font-size: 15.3px;
       color: #5ed17d; /* green like Tahuna button */
       opacity: 0.8;
     }
@@ -1495,7 +1496,7 @@
     .trivia-highest-score {
       margin-top: 6px;
       font-family: 'Marcellus', serif;
-      font-size: 60%; /* 60% of score text */
+      font-size: 90%; /* 90% of score text */
       color: #ffd700; /* gold */
       opacity: 1;
     }
@@ -1752,10 +1753,11 @@ Ki a Te Moremore-o-te-rangi e!</p>
 
           <button type="button" id="triviaSubmitBtn" class="trivia-submit-btn">Tahuna Te Ahi</button>
 
-          <div id="triviaFeedback" class="trivia-feedback"></div>
           <div id="triviaCurrentPoints" class="trivia-current-points">Points if correct: 1</div>
           <div id="triviaScoreDisplay" class="trivia-score">Score: 0 / 0</div>
           <div id="triviaHighestScore" class="trivia-highest-score">Highest Score: 0</div>
+
+          <div id="triviaFeedback" class="trivia-feedback"></div>
         </div>
       </div>
     </div>
