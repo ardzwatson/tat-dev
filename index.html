@@ -1658,7 +1658,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
       <input type="text" id="gatePass" class="gate-input gate-input-masked" inputmode="text" placeholder="" autofocus>
       <button onclick="unlockPortal()" class="gate-btn" id="unlockBtn">Tahuna Te Ahi</button>
       <div id="gateError" class="gate-error">Loading security database... Please wait.</div>
-      <div class="gate-build-tag">32.2 Build</div>
+      <div class="gate-build-tag">32.3 Build</div>
     </div>
   </div>
 
@@ -1728,23 +1728,28 @@ Ki a Te Moremore-o-te-rangi e!</p>
   <!-- TRIVIA SCREEN: "HE AHA TE WAIATA?" song lyric guessing game -->
   <div id="triviaScreen">
     <div class="trivia-header">
-      <div class="trivia-header-tag">He Aha Te Waiata?</div>
+      <div class="trivia-header-tag">
+        <select id="triviaGameModeSelect" class="trivia-mode-select" aria-label="Select game mode">
+          <option value="He Aha Te Waiata?">He Aha Te Waiata?</option>
+        </select>
+      </div>
       <button type="button" id="triviaBackBtn" class="trivia-back-btn" aria-label="Back">✕</button>
     </div>
     <div class="trivia-scroll-area">
       <div class="trivia-card">
-        <h2 class="trivia-title">HE AHA TE WAIATA?</h2>
+        <h2 class="trivia-title" id="triviaModeTitle">HE AHA TE WAIATA?</h2>
 
         <div id="triviaEmptyState" class="trivia-empty-state" style="display:none;">No trivia songs available yet - lyrics haven't been added for your assigned waiata.</div>
 
         <div id="triviaGameArea">
-          <button type="button" id="triviaHintBeforeBtn" class="trivia-hint-btn trivia-hint-before">Click for Hint<span class="trivia-hint-cost">-0.25</span></button>
+          <button type="button" id="triviaHintBeforeBtn" class="trivia-hint-btn trivia-hint-before" data-role="begin">Begin!</button>
           <div id="triviaHintBeforeText" class="trivia-hint-revealed trivia-hint-before-revealed" style="display:none;"></div>
-
+ 
           <div id="triviaLyricLine" class="trivia-lyric-line">Loading...</div>
-
+ 
           <div id="triviaHintAfterText" class="trivia-hint-revealed trivia-hint-after-revealed" style="display:none;"></div>
-          <button type="button" id="triviaHintAfterBtn" class="trivia-hint-btn trivia-hint-after">Click for Hint<span class="trivia-hint-cost">-0.25</span></button>
+          <div id="triviaTimer" class="trivia-timer">00:00</div>
+          <audio id="gameModeAudio" preload="auto" crossorigin="anonymous" style="display:none"></audio>
 
           <div class="trivia-answer-wrap">
             <input type="text" id="triviaAnswerInput" class="trivia-answer-input" placeholder="Te Waiata" autocomplete="off">
@@ -1870,7 +1875,7 @@ Ki a Te Moremore-o-te-rangi e!</p>
         <option value="1.0">100%</option>
       </select>
       <button id="downloadBtn" class="custom-png-btn">Save</button>
-      <div class="version-tag">32.2</div>
+      <div class="version-tag">32.3</div>
     </div>
   </div>
 
@@ -2095,6 +2100,8 @@ Ki a Te Moremore-o-te-rangi e!</p>
     const triviaHintBeforeText = document.getElementById('triviaHintBeforeText');
     const triviaHintAfterText = document.getElementById('triviaHintAfterText');
     const triviaLyricLine = document.getElementById('triviaLyricLine');
+    const triviaTimer = document.getElementById('triviaTimer');
+    const gameModeAudio = document.getElementById('gameModeAudio');
     const triviaAnswerInput = document.getElementById('triviaAnswerInput');
     const triviaAnswerDropdown = document.getElementById('triviaAnswerDropdown');
     const triviaSubmitBtn = document.getElementById('triviaSubmitBtn');
@@ -2102,6 +2109,16 @@ Ki a Te Moremore-o-te-rangi e!</p>
     const triviaCurrentPoints = document.getElementById('triviaCurrentPoints');
     const triviaScoreDisplay = document.getElementById('triviaScoreDisplay');
     const triviaHighestScore = document.getElementById('triviaHighestScore');
+    const triviaGameModeSelect = document.getElementById('triviaGameModeSelect');
+    const triviaModeTitle = document.getElementById('triviaModeTitle');
+
+    // Game-mode state
+    let systemGameModes = []; // [{name, audio}]
+    let currentGameMode = 'He Aha Te Waiata?';
+    let gameRunning = false;
+    let gameCountdownInterval = null;
+    let gameTimerInterval = null;
+    let gameHls = null;
 
     const viewfinder = document.getElementById('viewfinder');
     const reviewPlayer = document.getElementById('reviewPlayer');
@@ -2984,6 +3001,45 @@ Ki a Te Moremore-o-te-rangi e!</p>
     // applyStaticControlIcons() re-runs once this resolves so an already-open
     // Audio Player screen picks up the custom icons as soon as they arrive.
     const systemIconsReady = fetchSystemIcons();
+    // Also load system Game Modes (Column C name, Column D audio URL) from the System tab
+    async function fetchSystemGameModes() {
+      try {
+        const response = await fetch(SYSTEM_ICONS_CSV_URL);
+        if (!response.ok) throw new Error('System tab fetch failed');
+        const csvText = await response.text();
+        const rows = parseCsvFull(csvText);
+        // Row 1 header
+        const modes = [];
+        rows.slice(1).forEach((columns) => {
+          if (columns.every(v => v === '')) return;
+          const name = (columns[2] || '').trim(); // Column C
+          const rawAudio = (columns[3] || '').trim(); // Column D
+          if (!name) return;
+          const audioUrl = sanitizeExternalUrl(rawAudio) || '';
+          modes.push({ name, audio: audioUrl });
+        });
+        systemGameModes = modes;
+        // populate select
+        try {
+          if (triviaGameModeSelect) {
+            // Keep default option, then add modes (avoid duplicates)
+            const existing = new Set(Array.from(triviaGameModeSelect.options).map(o => o.value));
+            systemGameModes.forEach(m => {
+              if (!existing.has(m.name)) {
+                const opt = document.createElement('option');
+                opt.value = m.name;
+                opt.textContent = m.name;
+                triviaGameModeSelect.appendChild(opt);
+              }
+            });
+          }
+        } catch (e) { /* ignore UI population errors */ }
+        console.info('[System Modes] Loaded', systemGameModes.length, 'modes');
+      } catch (err) {
+        console.warn('fetchSystemGameModes failed', err);
+      }
+    }
+    const systemGameModesReady = fetchSystemGameModes();
 
     // Sets up (or re-points) the HLS player against whatever activeHlsUrl currently
     // is. Destroys any prior instance first, since this now runs every time the
@@ -4709,15 +4765,20 @@ Ki a Te Moremore-o-te-rangi e!</p>
         const hints = triviaCurrentRound ? (triviaCurrentRound.hintsUsed || 0) : 0;
         const points = Math.max(0, 1 - (hints * 0.25));
         if (triviaCurrentPoints) triviaCurrentPoints.textContent = `Points if correct: ${formatTriviaScoreNumber(points)}`;
+        // adjust size relative to score text (ensures ~90%)
+        if (triviaScoreDisplay && triviaCurrentPoints) {
+          // keep CSS-driven size, but ensure numeric fallback is fine
+        }
       } catch (e) { /* ignore */ }
     }
 
     function updateTriviaScoreDisplay() {
       // Update main score display
       triviaScoreDisplay.textContent = `Score: ${formatTriviaScoreNumber(triviaTotalPointsEarned)} / ${triviaRoundsAnswered}`;
-      // Update highest score (persisted per passcode)
+      // Update highest score (persisted per passcode and per mode)
       try {
-        const key = `triviaHighestScore_${currentPasscode || 'anon'}`;
+        const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+        const key = `triviaHighestScore_${mode}_${currentPasscode || 'anon'}`;
         const stored = parseFloat(localStorage.getItem(key) || '0') || 0;
         if (triviaTotalPointsEarned > stored) {
           localStorage.setItem(key, String(triviaTotalPointsEarned));
@@ -4743,44 +4804,142 @@ Ki a Te Moremore-o-te-rangi e!</p>
       return { song, lineIndex, hintsUsed: 0, hintBeforeUsed: false, hintAfterUsed: false, answered: false };
     }
 
+    // --- Game mode: start/stop and timer handling ---
+    async function startGameMode() {
+      const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+      const modeEntry = (systemGameModes || []).find(m => m.name === mode);
+      const audioUrl = modeEntry ? modeEntry.audio : '';
+
+      // 3 second count-in shown in lyric area
+      let count = 3;
+      triviaLyricLine.textContent = `Starting in ${count}...`;
+      triviaHintBeforeBtn.disabled = true;
+      gameCountdownInterval = setInterval(() => {
+        count -= 1;
+        if (count > 0) triviaLyricLine.textContent = `Starting in ${count}...`;
+        else {
+          clearInterval(gameCountdownInterval);
+          gameCountdownInterval = null;
+          actuallyStartAudioGame(audioUrl);
+        }
+      }, 1000);
+    }
+
+    async function actuallyStartAudioGame(audioUrl) {
+      // start playback and timer; if no audio provided, fallback to 30s
+      try {
+        gameRunning = true;
+        renderTriviaHintButtons();
+        // attach HLS if needed
+        if (Hls && Hls.isSupported() && audioUrl) {
+          if (gameHls) { try { gameHls.destroy(); } catch(e){} }
+          gameHls = new Hls();
+          gameHls.loadSource(audioUrl);
+          gameHls.attachMedia(gameModeAudio);
+          await new Promise((resolve) => {
+            gameHls.on(Hls.Events.MANIFEST_PARSED, () => resolve());
+            // fallback resolve after short delay
+            setTimeout(resolve, 1500);
+          });
+        } else if (audioUrl) {
+          gameModeAudio.src = audioUrl;
+        }
+        // play
+        try { await gameModeAudio.play(); } catch (e) { console.warn('game audio play failed', e); }
+        // determine duration
+        let duration = Math.floor(gameModeAudio.duration) || 30;
+        // if duration is Infinity or NaN, fallback to 30
+        if (!isFinite(duration) || duration <= 0) duration = 30;
+        let remaining = duration;
+        // update timer immediately
+        updateGameTimerDisplay(remaining);
+        gameTimerInterval = setInterval(() => {
+          remaining -= 1;
+          if (remaining <= 0) {
+            stopGameMode();
+          } else {
+            updateGameTimerDisplay(remaining);
+          }
+        }, 1000);
+      } catch (err) {
+        console.warn('Audio game start failed', err);
+        gameRunning = false;
+        renderTriviaHintButtons();
+      }
+    }
+
+    function updateGameTimerDisplay(seconds) {
+      const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
+      const ss = String(seconds % 60).padStart(2, '0');
+      if (triviaTimer) triviaTimer.textContent = `${mm}:${ss}`;
+    }
+
+    function stopGameMode() {
+      // stop audio and timers, return UI to pre-game state
+      try { if (gameHls) { gameHls.destroy(); gameHls = null; } } catch (e) {}
+      try { gameModeAudio.pause(); gameModeAudio.currentTime = 0; } catch (e) {}
+      if (gameCountdownInterval) { clearInterval(gameCountdownInterval); gameCountdownInterval = null; }
+      if (gameTimerInterval) { clearInterval(gameTimerInterval); gameTimerInterval = null; }
+      gameRunning = false;
+      triviaLyricLine.textContent = 'Game stopped. Select a mode and press Begin!';
+      triviaTimer.textContent = '00:00';
+      renderTriviaHintButtons();
+    }
+
     // Renders both hint buttons/revealed-text areas from triviaCurrentRound's
     // state. Once a hint has been used, its button is replaced by the
     // revealed line (or the boundary message) in that hint's accent color;
     // both buttons are disabled once the round has been answered.
     function renderTriviaHintButtons() {
       const round = triviaCurrentRound;
-      if (!round) return;
-      const isFirstLine = round.lineIndex <= 0;
-      const isLastLine = round.lineIndex >= round.song.lyrics.length - 1;
+      const selectedMode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+      // If default mode, keep hint behavior
+      if (selectedMode === 'He Aha Te Waiata?') {
+        if (!round) return;
+        const isFirstLine = round.lineIndex <= 0;
+        const isLastLine = round.lineIndex >= round.song.lyrics.length - 1;
 
-      // BEFORE hint
-      if (round.hintBeforeUsed) {
-        triviaHintBeforeBtn.style.display = 'none';
-        triviaHintBeforeText.style.display = 'block';
-        triviaHintBeforeText.style.opacity = '1';
-        triviaHintBeforeText.textContent = isFirstLine ? 'First line of song' : round.song.lyrics[round.lineIndex - 1];
-      } else {
-        triviaHintBeforeBtn.style.display = 'block';
-        triviaHintBeforeText.style.display = 'none';
-        triviaHintBeforeBtn.disabled = round.answered;
-        triviaHintBeforeBtn.style.opacity = round.answered ? '0.4' : '0.6';
+        // BEFORE hint
+        if (round.hintBeforeUsed) {
+          triviaHintBeforeBtn.style.display = 'none';
+          triviaHintBeforeText.style.display = 'block';
+          triviaHintBeforeText.style.opacity = '1';
+          triviaHintBeforeText.textContent = isFirstLine ? 'First line of song' : round.song.lyrics[round.lineIndex - 1];
+        } else {
+          triviaHintBeforeBtn.style.display = 'block';
+          triviaHintBeforeText.style.display = 'none';
+          triviaHintBeforeBtn.disabled = round.answered;
+          triviaHintBeforeBtn.style.opacity = round.answered ? '0.4' : '0.6';
+        }
+
+        // AFTER hint
+        if (round.hintAfterUsed) {
+          triviaHintAfterBtn.style.display = 'none';
+          triviaHintAfterText.style.display = 'block';
+          triviaHintAfterText.style.opacity = '1';
+          triviaHintAfterText.textContent = isLastLine ? 'Last line of song' : round.song.lyrics[round.lineIndex + 1];
+        } else {
+          triviaHintAfterBtn.style.display = 'block';
+          triviaHintAfterText.style.display = 'none';
+          triviaHintAfterBtn.disabled = round.answered;
+          triviaHintAfterBtn.style.opacity = round.answered ? '0.4' : '0.6';
+        }
+
+        // Update points
+        updateTriviaCurrentPoints();
+        return;
       }
 
-      // AFTER hint
-      if (round.hintAfterUsed) {
-        triviaHintAfterBtn.style.display = 'none';
-        triviaHintAfterText.style.display = 'block';
-        triviaHintAfterText.style.opacity = '1';
-        triviaHintAfterText.textContent = isLastLine ? 'Last line of song' : round.song.lyrics[round.lineIndex + 1];
-      } else {
-        triviaHintAfterBtn.style.display = 'block';
-        triviaHintAfterText.style.display = 'none';
-        triviaHintAfterBtn.disabled = round.answered;
-        triviaHintAfterBtn.style.opacity = round.answered ? '0.4' : '0.6';
-      }
+      // Game mode UI: BEFORE button is Begin/Stop, AFTER area shows timer
+      triviaHintBeforeBtn.style.display = 'block';
+      triviaHintBeforeBtn.disabled = false;
+      triviaHintBeforeBtn.textContent = gameRunning ? 'Stop' : 'Begin!';
+      triviaHintBeforeBtn.style.background = gameRunning ? 'linear-gradient(135deg,#ff4d4d,#b30000)' : 'linear-gradient(135deg,#ffd700,#ffb84d)';
+      triviaHintBeforeBtn.style.color = gameRunning ? '#111' : '#111';
 
-      // Update the displayed points available based on hints used
-      updateTriviaCurrentPoints();
+      // Timer area
+      triviaTimer.style.display = 'block';
+      triviaTimer.textContent = triviaTimer.textContent || '00:00';
     }
 
     function hideTriviaAnswerDropdown() {
@@ -4877,8 +5036,20 @@ Ki a Te Moremore-o-te-rangi e!</p>
       triviaCurrentRound.hintsUsed++;
       renderTriviaHintButtons();
     }
-    triviaHintBeforeBtn.addEventListener('click', handleTriviaHintBefore);
-    triviaHintAfterBtn.addEventListener('click', handleTriviaHintAfter);
+    // Keep legacy hint handlers but game mode uses a different flow
+    triviaHintBeforeBtn.addEventListener('click', (e) => {
+      const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+      if (mode === 'He Aha Te Waiata?') return handleTriviaHintBefore(e);
+      // Game mode Begin/Stop
+      if (!gameRunning) startGameMode();
+      else stopGameMode();
+    });
+    // Disable hint-after clicks when in game mode, otherwise use legacy
+    triviaHintAfterBtn.addEventListener('click', (e) => {
+      const mode = (triviaGameModeSelect && triviaGameModeSelect.value) ? triviaGameModeSelect.value : 'He Aha Te Waiata?';
+      if (mode === 'He Aha Te Waiata?') return handleTriviaHintAfter(e);
+      // otherwise no-op (timer shown in triviaTimer)
+    });
 
     // The submit button doubles as "Next Waiata" once a round has been
     // graded - same reused-button pattern used elsewhere in this app
