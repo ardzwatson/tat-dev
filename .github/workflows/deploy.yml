@@ -1,0 +1,20 @@
+name: Deploy PWA to Bunny.net
+
+on:
+  push:
+    branches:
+      - main  # Runs automatically every time a change is saved online
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Bunny.net Storage
+        uses: bunnycloud/storage-deploy-action@v1
+        with:
+          source: './'  # Uploads your index.html, manifest, and service worker from this repo
+          storageZone: ${{ secrets.BUNNY_STORAGE_ZONE }}
+          accessKey: ${{ secrets.BUNNY_API_KEY }}
