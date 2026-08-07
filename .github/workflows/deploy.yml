@@ -12,7 +12,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Upload PWA via Bunny Storage API
+      - name: Upload PWA via Sydney Storage API
         run: |
           curl -v -w "\nHTTP Status: %{http_code}\n" -X PUT "https://bunnycdn.com" \
                -H "AccessKey: ${{ secrets.BUNNY_API_KEY }}" \
