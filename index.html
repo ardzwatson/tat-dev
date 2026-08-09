@@ -3,20 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <title>Redirecting...</title>
-  <!-- Fallback meta refresh for non-JS browsers -->
-  <meta http-equiv="refresh" content="0; url=https://tat-app.b-cdn.net/">
-  
   <script>
-    // Preserves paths, query parameters, and hashes during redirect
-    const targetBase = "https://tat-app.b-cdn.net";
-    const currentPath = window.location.pathname;
-    const currentSearch = window.location.search;
-    const currentHash = window.location.hash;
+    const targetBase = "https://tat-app.b-cdn.net/"; // Replace with your actual Bunny URL
+    const repoName = "/reponame";                      // Replace with your actual repository name (leading slash required)
 
-    window.location.replace(targetBase + currentPath + currentSearch + currentHash);
+    let currentPath = window.location.pathname;
+    
+    // Remove repo name from path if present
+    if (currentPath.startsWith(repoName)) {
+      currentPath = currentPath.substring(repoName.length);
+    }
+
+    // Ensure path starts with a slash
+    if (!currentPath.startsWith("/")) {
+      currentPath = "/" + currentPath;
+    }
+
+    window.location.replace(targetBase + currentPath + window.location.search + window.location.hash);
   </script>
 </head>
 <body>
-  <p>Redirecting to app... <a href="https://tat-app.b-cdn.net/">Click here if not redirected.</a></p>
+  <p>Redirecting... <a href="https://tat-app.b-cdn.net/">Click here if not redirected.</a></p>
 </body>
 </html>
