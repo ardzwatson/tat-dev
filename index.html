@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Redirecting...</title>
+  <!-- Fallback meta refresh for non-JS browsers -->
+  <meta http-equiv="refresh" content="0; url=https://tat-app.b-cdn.net/">
+  
+  <script>
+    // Preserves paths, query parameters, and hashes during redirect
+    const targetBase = "https://tat-app.b-cdn.net";
+    const currentPath = window.location.pathname;
+    const currentSearch = window.location.search;
+    const currentHash = window.location.hash;
+
+    window.location.replace(targetBase + currentPath + currentSearch + currentHash);
+  </script>
+</head>
+<body>
+  <p>Redirecting to app... <a href="https://tat-app.b-cdn.net/">Click here if not redirected.</a></p>
+</body>
+</html>
